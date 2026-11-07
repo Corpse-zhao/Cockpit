@@ -6,39 +6,56 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install xcodegen
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphone || true
+
+      - name: Install XcodeGen
         run: brew install xcodegen
 
       - name: Generate Xcode project
-        run: xcodegen generate
-
-      - name: Archive (unsigned)
         run: |
-          xcodebuild archive \
+          xcodegen generate
+          ls -la
+
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
             -project E400Cockpit.xcodeproj \
             -scheme E400Cockpit \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -archivePath build/App.xcarchive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
 
-      - name: Package IPA (ad-hoc signed)
+      - name: Ad-hoc sign + package IPA
         run: |
-          mkdir -p build/Payload
-          cp -R "build/App.xcarchive/Products/Applications/E400Cockpit.app" build/Payload/
-          codesign --force --deep --sign - build/Payload/E400Cockpit.app
-          cd build && zip -qry "E400Cockpit-v0.1.0.ipa" Payload
-          cd ..
-          ls -lh build/*.ipa
+          APP=$(find build/Build/Products -maxdepth 3 -name "E400Cockpit.app" | head -1)
+          echo "APP=$APP"
+          /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP" || true
+          /usr/bin/codesign -dv "$APP" 2>&1 || true
+          rm -rf Payload && mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry "E400Cockpit-v0.1.0.ipa" Payload
+          ls -lh E400Cockpit-v0.1.0.ipa
+          unzip -l E400Cockpit-v0.1.0.ipa | head -20
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: E400Cockpit-v0.1.0-ipa
-          path: build/*.ipa
+          name: E400Cockpit-ipa
+          path: E400Cockpit-v0.1.0.ipa
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -52,8 +69,8 @@ jobs:
             - 凌博协议 AA55 解析（标定握手 + 实时帧）
             - 仪表页 / 数据台（原始帧监视）/ 设置（轮周长标定）
 
-            ad-hoc 签名，越狱设备经 AppSync / TrollStore / Sideloadly 安装。
-          files: build/*.ipa
+            ad-hoc 签名，越狱设备经 TrollStore / AppSync / Sideloadly 安装。
+          files: E400Cockpit-v0.1.0.ipa
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
