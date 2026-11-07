@@ -4,6 +4,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 新仓库的 GITHUB_TOKEN 默认只读，不显式给 write 会 403 建不了 Release
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
