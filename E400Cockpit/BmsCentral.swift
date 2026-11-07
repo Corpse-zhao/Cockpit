@@ -90,6 +90,18 @@ final class BmsCentral: NSObject, ObservableObject {
     /// 记住上次连过的设备，下次一键重连
     static let lastDeviceKey = "bms_last_device"
     static let lastNameKey = "bms_last_name"
+    /// 上次跑通的写入通道（FFF3 这类短名）。存下来下次优先用它，
+    /// 免掉一上来挨个试通道的那十几秒。
+    static let savedWriteKey = "bms_write_char"
+
+    /// 特征值 UUID 的稳定短名，用来在 UserDefaults 里记通道
+    static func key(for uuid: CBUUID) -> String {
+        let s = uuid.uuidString
+        if s.count == 36, s.hasPrefix("0000"), s.hasSuffix("-0000-1000-8000-00805F9B34FB") {
+            return String(s.dropFirst(4).prefix(4))
+        }
+        return s
+    }
 
     private var manager: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -123,6 +135,9 @@ final class BmsCentral: NSObject, ObservableObject {
     private var connectRSSI = 0
     /// 启动时自动连：扫到名字跟上次一样的板子就直接连
     private var autoConnectArmed = false
+    /// 「假在线」连续命中次数：先换通道，再考虑断链
+    private var staleHits = 0
+    private var lastStaleAt = Date.distantPast
 
     var isUsable: Bool { phase == .online }
 
@@ -208,6 +223,8 @@ final class BmsCentral: NSObject, ObservableObject {
         connectRSSI = rssi
         gotFrame = false
         started = false
+        staleHits = 0
+        lastStaleAt = .distantPast
         gattInfo = nil
         lastRX = ""
         rxTotal = 0
@@ -248,6 +265,7 @@ final class BmsCentral: NSObject, ObservableObject {
     func forgetLast() {
         UserDefaults.standard.removeObject(forKey: BmsCentral.lastDeviceKey)
         UserDefaults.standard.removeObject(forKey: BmsCentral.lastNameKey)
+        UserDefaults.standard.removeObject(forKey: BmsCentral.savedWriteKey)
         disconnect()
     }
 
@@ -266,6 +284,8 @@ final class BmsCentral: NSObject, ObservableObject {
         gotFrame = false
         pendingRetries = 0
         probeIndex = 0
+        staleHits = 0
+        lastStaleAt = .distantPast
         awaitingReply = false
         notifyCandidates = []
         writeCandidates = []
@@ -331,10 +351,22 @@ final class BmsCentral: NSObject, ObservableObject {
     @objc private func tick() {
         guard let p = peripheral, !writeCandidates.isEmpty else { return }
 
-        // 假在线：还连着但 5 秒没有一帧，说明链路已经僵了 —— 主动断开重建
-        if gotFrame, Date().timeIntervalSince(lastFrameAt) > 5 {
-            lastError = "5 秒没数据，正在重建连接…"
+        // 假在线：还连着但 6 秒没有一帧。先换写入通道试（模块复位后通道可能变了），
+        // 两次都不行才断链重建——重建一次要好几秒，能不断就不断。
+        if gotFrame, Date().timeIntervalSince(lastFrameAt) > 6,
+           Date().timeIntervalSince(lastStaleAt) > 2.5 {
+            lastStaleAt = Date()
+            staleHits += 1
             awaitingReply = false
+            if staleHits <= 2, writeCandidates.count > 1 {
+                probeIndex = (probeIndex + 1) % writeCandidates.count
+                writeChar = writeCandidates[probeIndex]
+                updateGattInfo()
+                lastError = "数据停了，正在换通道重试（\(staleHits)/2）…"
+                writeStatus(p)
+                return
+            }
+            lastError = "连不上数据了，正在重建连接…"
             manager?.cancelPeripheralConnection(p)
             return
         }
@@ -349,9 +381,13 @@ final class BmsCentral: NSObject, ObservableObject {
         }
 
         switchProbeIfNeeded()
+        writeChar = writeCandidates[min(probeIndex, writeCandidates.count - 1)]
+        writeStatus(p)
+    }
 
-        let w = writeCandidates[min(probeIndex, writeCandidates.count - 1)]
-        writeChar = w
+    /// 往当前写入通道发一帧状态查询
+    private func writeStatus(_ p: CBPeripheral) {
+        guard let w = writeChar else { return }
         // 能不带响应就不带：省一个来回，数据更跟手；模块不支持再退回 withResponse
         let type: CBCharacteristicWriteType =
             w.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
@@ -379,18 +415,16 @@ final class BmsCentral: NSObject, ObservableObject {
     private func updateGattInfo() {
         guard let n = notifyChar, let w = writeChar else { return }
         var s = "FFE0 / \(short(n.uuid)) 通知 → \(short(w.uuid)) 写入"
-        if !gotFrame && writeCandidates.count > 1 {
+        if gotFrame {
+            s += " · 已锁定"
+        } else if writeCandidates.count > 1 {
             s += " · 试 \(probeIndex + 1)/\(writeCandidates.count)"
         }
         gattInfo = s
     }
 
     private func short(_ u: CBUUID) -> String {
-        let s = u.uuidString
-        if s.count == 36, s.hasPrefix("0000"), s.hasSuffix("-0000-1000-8000-00805F9B34FB") {
-            return String(s.dropFirst(4).prefix(4))
-        }
-        return s
+        BmsCentral.key(for: u)
     }
 }
 
@@ -553,10 +587,21 @@ extension BmsCentral: CBPeripheralDelegate {
         for c in chars where writable(c) {
             if !ordered.contains(where: { $0.uuid == c.uuid }) { ordered.append(c) }
         }
+
+        // 上次跑通的通道排最前：一上来就命中，省掉挨个试通道的十几秒
+        let saved = UserDefaults.standard.string(forKey: BmsCentral.savedWriteKey)
+        var usingSaved = false
+        if let saved, let idx = ordered.firstIndex(where: { BmsCentral.key(for: $0.uuid) == saved }) {
+            let c = ordered.remove(at: idx)
+            ordered.insert(c, at: 0)
+            usingSaved = true
+        }
+
         for c in ordered where !writeCandidates.contains(where: { $0.uuid == c.uuid }) {
             writeCandidates.append(c)
         }
 
+        if usingSaved { probeIndex = 0 }
         startIfReady()
     }
 
@@ -604,6 +649,8 @@ extension BmsCentral: CBPeripheralDelegate {
         if let t = parser.feed(bytes) {
             gotFrame = true
             awaitingReply = false
+            staleHits = 0
+            lastStaleAt = .distantPast
             lastFrameAt = Date()
             probeTimer?.invalidate()
             probeTimer = nil
@@ -612,6 +659,13 @@ extension BmsCentral: CBPeripheralDelegate {
             lastError = nil
             phase = .online
             frameCount += 1
+            // 这条通道是好的，记下来，下次连上直接用它
+            if let w = writeChar {
+                let k = BmsCentral.key(for: w.uuid)
+                if UserDefaults.standard.string(forKey: BmsCentral.savedWriteKey) != k {
+                    UserDefaults.standard.set(k, forKey: BmsCentral.savedWriteKey)
+                }
+            }
             updateGattInfo()
         }
     }

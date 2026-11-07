@@ -273,7 +273,6 @@ struct NeonStatusPanel: View {
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("show_motor_temp") private var showMotorTemp = true
     @AppStorage("show_bms_strip") private var showBms = true
-    @AppStorage("gear_manual") private var manualGear = 0
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
 
     @State private var showBmsDetail = false
@@ -399,14 +398,6 @@ struct NeonStatusPanel: View {
         var key: String
         var value: String
         var color: Color
-        /// 挡位格：可点、可长按
-        var gear: Bool = false
-    }
-
-    // MARK: 挡位
-
-    private func cycleGear() {
-        manualGear = manualGear >= 4 ? 0 : manualGear + 1
     }
 
     private var header: some View {
@@ -511,37 +502,35 @@ struct NeonStatusPanel: View {
 
     private var controllerRows: [[TileSpec]] {
         let t = central.telemetry
-        let faultColor: Color = (t?.fault ?? 0) == 0
-            ? Color(red: 0.2, green: 0.95, blue: 0.55)
-            : Color(red: 1.0, green: 0.28, blue: 0.30)
+        let fault = t?.fault ?? 0
+        let watts = (t?.busVoltage ?? 0) * (t?.busCurrent ?? 0)
 
-        var first: [TileSpec] = [
-            TileSpec(key: "挡位", value: gearText(t), color: .white, gear: true),
-            TileSpec(key: "转速", value: t.map { "\($0.rpm)" } ?? "——", color: .white),
-            TileSpec(key: "控制器温度", value: Fmt.temp(t?.controllerTemp),
-                     color: tempColor(t?.controllerTemp))
-        ]
-        if showMotorTemp {
-            first.append(TileSpec(key: "电机温度", value: Fmt.temp(t?.motorTemp),
-                                  color: tempColor(t?.motorTemp)))
-        } else {
-            first.append(TileSpec(key: "故障码",
-                                  value: (t?.fault ?? 0) == 0
-                                    ? "无"
-                                    : String(format: "0x%04X", (t?.fault ?? 0) & 0xFFFF),
-                                  color: faultColor))
-        }
-
-        let second: [TileSpec] = [
+        // 第一排：母线电压 / 母线电流 / 功率(W) / 控制器温度
+        let first: [TileSpec] = [
             TileSpec(key: "母线电压", value: t.map { Fmt.num($0.busVoltage, "V") } ?? "——", color: .white),
             TileSpec(key: "母线电流", value: t.map { Fmt.num($0.busCurrent, "A") } ?? "——",
                      color: (t?.busCurrent ?? 0) < -0.005
                        ? Color(red: 0.2, green: 0.95, blue: 0.55)
                        : ((t?.busCurrent ?? 0) > 0.005 ? theme.accentLight : .white)),
-            TileSpec(key: "功率",
-                     value: t.map { Fmt.num($0.busVoltage * $0.busCurrent / 1000.0, "kW") } ?? "——",
-                     color: .white),
-            TileSpec(key: "定位精度", value: gpsText, color: gpsColor)
+            // 功率直接用瓦，千瓦在踏板车上永远是个 0.xx 的小数，看着费劲
+            TileSpec(key: "功率", value: t == nil ? "——" : String(format: "%.0f W", watts), color: .white),
+            TileSpec(key: "控制器温度", value: Fmt.temp(t?.controllerTemp),
+                     color: tempColor(t?.controllerTemp))
+        ]
+
+        // 第二排：转速 / 定位精度 / 电机温度（关了温感就换成里程）/ 故障码
+        let third: TileSpec = showMotorTemp
+            ? TileSpec(key: "电机温度", value: Fmt.temp(t?.motorTemp), color: tempColor(t?.motorTemp))
+            : TileSpec(key: "本次里程", value: String(format: "%.2f km", central.tripKm), color: .white)
+
+        let second: [TileSpec] = [
+            TileSpec(key: "转速", value: t.map { "\($0.rpm)" } ?? "——", color: .white),
+            TileSpec(key: "定位精度", value: gpsText, color: gpsColor),
+            third,
+            TileSpec(key: "故障码",
+                     value: fault == 0 ? "状态良好" : String(format: "0x%04X", fault & 0xFFFF),
+                     color: fault == 0 ? Color(red: 0.2, green: 0.95, blue: 0.55)
+                                       : Color(red: 1.0, green: 0.28, blue: 0.30))
         ]
         return [first, second]
     }
@@ -611,13 +600,6 @@ struct NeonStatusPanel: View {
         return .white
     }
 
-    /// 挡位：解析值优先；解析不到就用「手动挡位」，点格子循环切换
-    private func gearText(_ t: LingboParser.Telemetry?) -> String {
-        if let g = t?.gear { return "P\(g)" }
-        if manualGear > 0 { return "P\(manualGear)" }
-        return "——"
-    }
-
     private var gpsText: String {
         if central.gpsActive {
             return String(format: "%.0f m", central.gpsAccuracyM)
@@ -642,23 +624,13 @@ struct NeonStatusPanel: View {
 
     @ViewBuilder
     private func tile(_ s: TileSpec) -> some View {
-        let card = VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Text(s.key)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.60))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                if s.gear && manualGear > 0 {
-                    Text("手动")
-                        .font(.system(size: 7.5, weight: .semibold))
-                        .padding(.horizontal, 3.5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(theme.accent.opacity(0.30)))
-                        .foregroundColor(theme.accentLight)
-                }
-                Spacer(minLength: 0)
-            }
+        VStack(alignment: .leading, spacing: 2) {
+            Text(s.key)
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.60))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
             Text(s.value)
                 .font(.system(size: 20, weight: .bold, design: .rounded))
@@ -670,15 +642,6 @@ struct NeonStatusPanel: View {
         .padding(.horizontal, 11)
         .padding(.vertical, 7)
         .glassCard()
-
-        if s.gear {
-            card
-                .contentShape(Rectangle())
-                .onTapGesture { cycleGear() }
-                .onLongPressGesture(minimumDuration: 0.6) { manualGear = 0 }
-        } else {
-            card
-        }
     }
 }
 
