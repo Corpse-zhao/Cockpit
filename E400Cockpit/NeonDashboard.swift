@@ -292,10 +292,19 @@ struct NeonStatusPanel: View {
         HStack(spacing: 9) {
             ForEach(Array(range), id: \.self) { i in
                 let t = tiles[i]
-                tile(t.0, t.1, t.2)
+                if i == 0 {
+                    // 挡位格：点一下循环切 1→2→3→4→自动，长按回到自动
+                    tile(t.0, t.1, t.2, action: { cycleGear() })
+                } else {
+                    tile(t.0, t.1, t.2)
+                }
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private func cycleGear() {
+        manualGear = manualGear >= 4 ? 0 : manualGear + 1
     }
 
     private var header: some View {
@@ -418,24 +427,24 @@ struct NeonStatusPanel: View {
              (t?.busCurrent ?? 0) < -0.005 ? Color(red: 0.2, green: 0.95, blue: 0.55)
                 : ((t?.busCurrent ?? 0) > 0.005 ? theme.accentLight : .white)),
             ("功率", t.map { Fmt.num($0.busVoltage * $0.busCurrent / 1000.0, "kW") } ?? "——", .white),
-            ("定位", gpsText, gpsColor)
+            ("定位精度", gpsText, gpsColor)
         ]
         return rows
     }
 
-    /// 挡位：解析值优先；解析不到时用「手动挡位」兜底，并标注来源
+    /// 挡位：解析值优先；解析不到就用「手动挡位」，点格子循环切换
     private func gearText(_ t: LingboParser.Telemetry?) -> String {
         if let g = t?.gear { return "P\(g)" }
-        if manualGear > 0 { return "P\(manualGear)·手" }
+        if manualGear > 0 { return "P\(manualGear)" }
         return "——"
     }
 
     private var gpsText: String {
         if central.gpsActive {
-            return String(format: "±%.0fm", central.gpsAccuracyM)
+            return String(format: "%.0f m", central.gpsAccuracyM)
         }
         if central.gpsAccuracyM > 0 {
-            return String(format: "弱 ±%.0f", central.gpsAccuracyM)
+            return String(format: "%.0f m", central.gpsAccuracyM)
         }
         return "搜索中"
     }
@@ -452,13 +461,26 @@ struct NeonStatusPanel: View {
         return .white
     }
 
-    private func tile(_ key: String, _ value: String, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(key)
-                .font(.system(size: 10.5))
-                .foregroundColor(.white.opacity(0.60))
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+    @ViewBuilder
+    private func tile(_ key: String, _ value: String, _ color: Color,
+                      action: (() -> Void)? = nil) -> some View {
+        let card = VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text(key)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.white.opacity(0.60))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                if action != nil && manualGear > 0 {
+                    Text("手动")
+                        .font(.system(size: 8, weight: .semibold))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(theme.accent.opacity(0.30)))
+                        .foregroundColor(theme.accentLight)
+                }
+                Spacer(minLength: 0)
+            }
             Spacer(minLength: 0)
             Text(value)
                 .font(.system(size: 23, weight: .bold, design: .rounded))
@@ -470,6 +492,15 @@ struct NeonStatusPanel: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .glassCard()
+
+        if let action {
+            card
+                .contentShape(Rectangle())
+                .onTapGesture { action() }
+                .onLongPressGesture(minimumDuration: 0.6) { manualGear = 0 }
+        } else {
+            card
+        }
     }
 }
 

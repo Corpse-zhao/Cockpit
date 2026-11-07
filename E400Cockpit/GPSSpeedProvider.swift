@@ -83,11 +83,11 @@ final class GPSSpeedProvider: NSObject, CLLocationManagerDelegate {
             smoothed = hasFix ? (smoothed * 0.4 + kmh * 0.6) : kmh
             hasFix = true
             onUpdate?(smoothed, acc, true)
-            onStatus?(String(format: "GPS ±%.0fm", acc), true)
+            onStatus?(String(format: "精度 %.0f m", acc), true)
         } else {
             hasFix = false
             onUpdate?(0, acc, false)
-            onStatus?(acc > 0 ? String(format: "GPS 弱（±%.0fm）", acc) : "搜索卫星", false)
+            onStatus?(acc > 0 ? String(format: "精度差（%.0f m）", acc) : "搜索卫星", false)
         }
     }
 
