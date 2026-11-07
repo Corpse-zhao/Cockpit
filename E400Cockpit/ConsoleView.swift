@@ -183,6 +183,7 @@ struct ConsoleView: View {
                     .font(.caption)
                 }
                 FrameInspectorCard()
+                BmsFrameCard()
             }
             .padding(12)
 

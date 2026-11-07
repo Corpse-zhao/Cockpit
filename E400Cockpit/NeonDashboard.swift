@@ -269,39 +269,141 @@ struct NeonGauge: View {
 
 struct NeonStatusPanel: View {
     @EnvironmentObject var central: CockpitCentral
+    @EnvironmentObject var bms: BmsCentral
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("show_motor_temp") private var showMotorTemp = true
+    @AppStorage("show_bms_strip") private var showBms = true
     @AppStorage("gear_manual") private var manualGear = 0
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
+
+    @State private var showBmsDetail = false
 
     private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 8) {
             header
-            VStack(spacing: 9) {
-                tileRow(0..<4)
-                tileRow(4..<8)
+
+            // 第一、二层：控制器
+            block(title: "控制器",
+                  note: central.lastFrameLength == 0 ? "未连接" : "帧长 \(central.lastFrameLength)",
+                  noteColor: frameLengthColor,
+                  accent: Color.white.opacity(0.50),
+                  rows: controllerRows)
+                .frame(maxHeight: .infinity)
+
+            // 第三、四层：电池（BMS）。没接上就只留一条占位，控制器单独铺满
+            if showBms {
+                if bms.telemetry != nil {
+                    block(title: "电池",
+                          note: bmsNote,
+                          noteColor: bmsNoteColor,
+                          accent: Color(red: 0.2, green: 0.95, blue: 0.55),
+                          rows: bmsRows,
+                          onTap: { showBmsDetail = true })
+                        .frame(maxHeight: .infinity)
+                } else {
+                    bmsOfflineRow
+                }
             }
-            .frame(maxHeight: .infinity)
+
             footer
+        }
+        .sheet(isPresented: $showBmsDetail) {
+            BmsDetailView().environmentObject(bms)
         }
     }
 
-    private func tileRow(_ range: Range<Int>) -> some View {
-        HStack(spacing: 9) {
-            ForEach(Array(range), id: \.self) { i in
-                let t = tiles[i]
-                if i == 0 {
-                    // 挡位格：点一下循环切 1→2→3→4→自动，长按回到自动
-                    tile(t.0, t.1, t.2, action: { cycleGear() })
-                } else {
-                    tile(t.0, t.1, t.2)
+    // MARK: 电池未连接
+
+    private var bmsOfflineRow: some View {
+        Button {
+            showBmsDetail = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "battery.0")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.38))
+                Text("电池未连接")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.50))
+                Text(bms.phase == .scanning ? "扫描中…" : "设置 → 电池（蚂蚁板 BMS）")
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.30))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.25))
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 11)
+                    .strokeBorder(Color.white.opacity(0.13),
+                                  style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: 一组两层
+
+    private func block(title: String,
+                       note: String?,
+                       noteColor: Color,
+                       accent: Color,
+                       rows: [[TileSpec]],
+                       onTap: (() -> Void)? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(accent)
+                    .frame(width: 3, height: 9)
+                Text(title)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                if let note {
+                    Text(note)
+                        .font(.system(size: 8.5))
+                        .foregroundColor(noteColor)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if onTap != nil {
+                    Text("详情")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(.white.opacity(0.35))
                 }
             }
+
+            VStack(spacing: 7) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: 8) {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, spec in
+                            tile(spec)
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(maxHeight: .infinity)
         }
-        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap?() }
     }
+
+    /// 一格数据
+    private struct TileSpec {
+        var key: String
+        var value: String
+        var color: Color
+        /// 挡位格：可点、可长按
+        var gear: Bool = false
+    }
+
+    // MARK: 挡位
 
     private func cycleGear() {
         manualGear = manualGear >= 4 ? 0 : manualGear + 1
@@ -405,31 +507,108 @@ struct NeonStatusPanel: View {
         return Color(red: 1.0, green: 0.55, blue: 0.25)
     }
 
-    private var tiles: [(String, String, Color)] {
+    // MARK: 控制器数据（第 1、2 层）
+
+    private var controllerRows: [[TileSpec]] {
         let t = central.telemetry
         let faultColor: Color = (t?.fault ?? 0) == 0
             ? Color(red: 0.2, green: 0.95, blue: 0.55)
             : Color(red: 1.0, green: 0.28, blue: 0.30)
 
-        var rows: [(String, String, Color)] = [
-            ("挡位", gearText(t), .white),
-            ("转速", t.map { "\($0.rpm)" } ?? "——", .white),
-            ("控制器温度", Fmt.temp(t?.controllerTemp), tempColor(t?.controllerTemp))
+        var first: [TileSpec] = [
+            TileSpec(key: "挡位", value: gearText(t), color: .white, gear: true),
+            TileSpec(key: "转速", value: t.map { "\($0.rpm)" } ?? "——", color: .white),
+            TileSpec(key: "控制器温度", value: Fmt.temp(t?.controllerTemp),
+                     color: tempColor(t?.controllerTemp))
         ]
         if showMotorTemp {
-            rows.append(("电机温度", Fmt.temp(t?.motorTemp), tempColor(t?.motorTemp)))
+            first.append(TileSpec(key: "电机温度", value: Fmt.temp(t?.motorTemp),
+                                  color: tempColor(t?.motorTemp)))
         } else {
-            rows.append(("故障码", (t?.fault ?? 0) == 0 ? "无" : String(format: "0x%04X", (t?.fault ?? 0) & 0xFFFF), faultColor))
+            first.append(TileSpec(key: "故障码",
+                                  value: (t?.fault ?? 0) == 0
+                                    ? "无"
+                                    : String(format: "0x%04X", (t?.fault ?? 0) & 0xFFFF),
+                                  color: faultColor))
         }
-        rows += [
-            ("母线电压", t.map { Fmt.num($0.busVoltage, "V") } ?? "——", .white),
-            ("母线电流", t.map { Fmt.num($0.busCurrent, "A") } ?? "——",
-             (t?.busCurrent ?? 0) < -0.005 ? Color(red: 0.2, green: 0.95, blue: 0.55)
-                : ((t?.busCurrent ?? 0) > 0.005 ? theme.accentLight : .white)),
-            ("功率", t.map { Fmt.num($0.busVoltage * $0.busCurrent / 1000.0, "kW") } ?? "——", .white),
-            ("定位精度", gpsText, gpsColor)
+
+        let second: [TileSpec] = [
+            TileSpec(key: "母线电压", value: t.map { Fmt.num($0.busVoltage, "V") } ?? "——", color: .white),
+            TileSpec(key: "母线电流", value: t.map { Fmt.num($0.busCurrent, "A") } ?? "——",
+                     color: (t?.busCurrent ?? 0) < -0.005
+                       ? Color(red: 0.2, green: 0.95, blue: 0.55)
+                       : ((t?.busCurrent ?? 0) > 0.005 ? theme.accentLight : .white)),
+            TileSpec(key: "功率",
+                     value: t.map { Fmt.num($0.busVoltage * $0.busCurrent / 1000.0, "kW") } ?? "——",
+                     color: .white),
+            TileSpec(key: "定位精度", value: gpsText, color: gpsColor)
         ]
-        return rows
+        return [first, second]
+    }
+
+    // MARK: 电池数据（第 3、4 层）
+
+    private var bmsRows: [[TileSpec]] {
+        guard let b = bms.telemetry else {
+            let dim = Color.white.opacity(0.30)
+            return [
+                [TileSpec(key: "电量", value: "——", color: dim),
+                 TileSpec(key: "总压", value: "——", color: dim),
+                 TileSpec(key: "电池电流", value: "——", color: dim),
+                 TileSpec(key: "电池功率", value: "——", color: dim)],
+                [TileSpec(key: "压差", value: "——", color: dim),
+                 TileSpec(key: "电池温度", value: "——", color: dim),
+                 TileSpec(key: "剩余容量", value: "——", color: dim),
+                 TileSpec(key: "健康 SOH", value: "——", color: dim)]
+            ]
+        }
+
+        let green = Color(red: 0.2, green: 0.95, blue: 0.55)
+        let powerKW = b.packVoltage * b.current / 1000.0
+        let first: [TileSpec] = [
+            TileSpec(key: "电量", value: "\(b.soc)%", color: socColor(b.soc)),
+            TileSpec(key: "总压", value: String(format: "%.2f V", b.packVoltage), color: .white),
+            TileSpec(key: "电池电流", value: String(format: "%+.2f A", b.current),
+                     color: b.current > 0.05 ? green : (b.current < -0.05 ? theme.accentLight : .white)),
+            TileSpec(key: "电池功率", value: String(format: "%+.2f kW", powerKW), color: .white)
+        ]
+        let second: [TileSpec] = [
+            TileSpec(key: "压差", value: "\(Int((b.deltaV * 1000).rounded())) mV",
+                     color: b.deltaV > 0.05 ? .orange : .white),
+            TileSpec(key: "电池温度", value: "\(b.temps.first ?? b.mosTemp)℃",
+                     color: cellTempColor(b.temps.first ?? b.mosTemp)),
+            TileSpec(key: "剩余容量", value: String(format: "%.2f Ah", b.remainingAh), color: .white),
+            // 有些蚂蚁板固件不填 SOH 字段，恒为 0，别让它看起来像坏了
+            TileSpec(key: "健康 SOH", value: b.soh > 0 ? "\(b.soh)%" : "——",
+                     color: b.soh > 0 ? .white : Color.white.opacity(0.30))
+        ]
+        return [first, second]
+    }
+
+    private var bmsNote: String {
+        guard let b = bms.telemetry else {
+            return bms.phase == .scanning ? "扫描中" : "未连接"
+        }
+        return "\(b.cellCount)S · \(b.temps.count) 温感"
+    }
+
+    private var bmsNoteColor: Color {
+        guard bms.telemetry != nil else {
+            return bms.phase == .scanning ? .orange : .white.opacity(0.35)
+        }
+        return Color(red: 0.2, green: 0.95, blue: 0.55)
+    }
+
+    private func socColor(_ soc: Int) -> Color {
+        if soc <= 15 { return Color(red: 1.0, green: 0.28, blue: 0.30) }
+        if soc <= 30 { return .orange }
+        return Color(red: 0.2, green: 0.95, blue: 0.55)
+    }
+
+    private func cellTempColor(_ v: Int) -> Color {
+        if v >= 55 { return Color(red: 1.0, green: 0.28, blue: 0.30) }
+        if v >= 45 { return .orange }
+        return .white
     }
 
     /// 挡位：解析值优先；解析不到就用「手动挡位」，点格子循环切换
@@ -462,19 +641,18 @@ struct NeonStatusPanel: View {
     }
 
     @ViewBuilder
-    private func tile(_ key: String, _ value: String, _ color: Color,
-                      action: (() -> Void)? = nil) -> some View {
-        let card = VStack(alignment: .leading, spacing: 4) {
+    private func tile(_ s: TileSpec) -> some View {
+        let card = VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
-                Text(key)
-                    .font(.system(size: 10.5))
+                Text(s.key)
+                    .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.60))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                if action != nil && manualGear > 0 {
+                    .minimumScaleFactor(0.72)
+                if s.gear && manualGear > 0 {
                     Text("手动")
-                        .font(.system(size: 8, weight: .semibold))
-                        .padding(.horizontal, 4)
+                        .font(.system(size: 7.5, weight: .semibold))
+                        .padding(.horizontal, 3.5)
                         .padding(.vertical, 1)
                         .background(Capsule().fill(theme.accent.opacity(0.30)))
                         .foregroundColor(theme.accentLight)
@@ -482,21 +660,21 @@ struct NeonStatusPanel: View {
                 Spacer(minLength: 0)
             }
             Spacer(minLength: 0)
-            Text(value)
-                .font(.system(size: 23, weight: .bold, design: .rounded))
-                .foregroundColor(color)
+            Text(s.value)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundColor(s.color)
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
+                .minimumScaleFactor(0.42)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
         .glassCard()
 
-        if let action {
+        if s.gear {
             card
                 .contentShape(Rectangle())
-                .onTapGesture { action() }
+                .onTapGesture { cycleGear() }
                 .onLongPressGesture(minimumDuration: 0.6) { manualGear = 0 }
         } else {
             card
@@ -536,6 +714,7 @@ extension View {
 
 struct NeonDashboard: View {
     @EnvironmentObject var central: CockpitCentral
+    @EnvironmentObject var bms: BmsCentral
     @AppStorage("gauge_max_speed") private var maxSpeed = 140.0
     @AppStorage("boot_animation") private var bootAnimation = true
 
@@ -577,6 +756,7 @@ struct NeonDashboard: View {
         .onAppear {
             withAnimation(.easeOut(duration: 0.28)) { appear = true }
             handlePhase(central.phase)
+            bms.autoReconnectIfNeeded()
         }
         .onChange(of: central.phase) { newPhase in
             handlePhase(newPhase)

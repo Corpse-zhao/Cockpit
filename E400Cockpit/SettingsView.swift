@@ -4,6 +4,7 @@ import PhotosUI
 
 struct SettingsView: View {
     @EnvironmentObject var central: CockpitCentral
+    @EnvironmentObject var bms: BmsCentral
 
     // 轮胎
     @AppStorage(TireModel.Keys.rearSpec) private var rearSpec = "90/90-12 44J"
@@ -33,6 +34,8 @@ struct SettingsView: View {
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("value_decimals") private var decimals = 2
     @AppStorage("show_motor_temp") private var showMotorTemp = true
+    @AppStorage("show_bms_strip") private var showBms = true
+    @AppStorage("bms_auto_reconnect") private var bmsAuto = true
 
     @AppStorage("gauge_max_speed") private var maxSpeed = 140.0
     @AppStorage("boot_animation") private var bootAnimation = true
@@ -58,6 +61,7 @@ struct SettingsView: View {
     private enum ActiveSheet: String, Identifiable {
         case gearFinder
         case crop
+        case bmsDetail
         var id: String { rawValue }
     }
 
@@ -93,6 +97,7 @@ struct SettingsView: View {
             appearanceSection
             speedSourceSection
             connectionSection
+            batterySection
             vehicleSection
             sensorSection
             rearTireSection
@@ -137,6 +142,9 @@ struct SettingsView: View {
                         }
                     )
                 }
+            case .bmsDetail:
+                BmsDetailView()
+                    .environmentObject(bms)
             }
         }
     }
@@ -313,6 +321,138 @@ struct SettingsView: View {
             Text("连接与显示")
         } footer: {
             Text("控制器型号连上后从广播名自动识别（LBMC- 后面那串），也会把数据帧里出现的可打印字符串收集成候选。车型和控制器都可以手改，改过之后不再自动覆盖。小数位影响电压/电流/功率/温度/转把，速度保持整数。")
+        }
+    }
+
+    // MARK: 电池（BMS）
+
+    private var batterySection: some View {
+        Section {
+            Toggle("仪表页显示电池条", isOn: $showBms)
+            Toggle("启动时自动重连上次电池", isOn: $bmsAuto)
+
+            HStack(spacing: 6) {
+                Text("状态")
+                Spacer()
+                Circle()
+                    .fill(bmsColor)
+                    .frame(width: 7, height: 7)
+                Text(bms.phase.rawValue)
+                    .foregroundColor(bmsColor)
+                if let n = bms.connectedName {
+                    Text("· \(n)")
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            if let t = bms.telemetry {
+                Button {
+                    activeSheet = .bmsDetail
+                } label: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(t.soc)%")
+                                .font(.title3.weight(.bold))
+                                .monospacedDigit()
+                            Text("\(t.cellCount)S · 压差 \(Int((t.deltaV * 1000).rounded())) mV")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(String(format: "%.2f V", t.packVoltage))
+                                .monospacedDigit()
+                            Text(String(format: "%+.2f A", t.current))
+                                .font(.caption)
+                                .monospacedDigit()
+                                .foregroundColor(t.current < -0.05 ? .green : .primary)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                LabeledContent("温感", value: "\(t.temps.count) 路 · MOS \(t.mosTemp)℃")
+                LabeledContent("已收帧", value: "\(bms.frameCount)")
+            }
+
+            if bms.phase == .scanning {
+                Button("停止扫描") { bms.stopScan() }
+            } else if bms.phase == .online || bms.phase == .connecting {
+                Button("断开电池") { bms.disconnect() }
+            } else {
+                Button {
+                    bms.startScan()
+                } label: {
+                    Label("扫描电池（蚂蚁板 FFE0）", systemImage: "battery.100.bolt")
+                }
+                if bms.hasLastDevice {
+                    Button {
+                        bms.reconnectLast()
+                    } label: {
+                        Label("重连上次电池", systemImage: "arrow.clockwise")
+                    }
+                }
+            }
+
+            if let err = bms.lastError {
+                Label(err, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+
+            if !bms.devices.isEmpty {
+                ForEach(bms.devices) { d in
+                    Button {
+                        bms.connect(d)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: d.likely ? "battery.100.bolt" : "dot.radiowaves.left.and.right")
+                                .font(.footnote)
+                                .foregroundColor(d.likely ? .green : .secondary)
+                            Text(d.name)
+                                .lineLimit(1)
+                            if d.likely {
+                                Text("疑似 BMS")
+                                    .font(.caption2)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.green.opacity(0.18)))
+                                    .foregroundColor(.green)
+                            }
+                            Spacer()
+                            Text("\(d.rssi)")
+                                .font(.caption.monospacedDigit())
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if bms.hasLastDevice {
+                Button(role: .destructive) {
+                    bms.forgetLast()
+                } label: {
+                    Label("忘记这块电池", systemImage: "trash")
+                        .font(.footnote)
+                }
+            }
+        } header: {
+            Text("电池（蚂蚁板 BMS）")
+        } footer: {
+            Text("电池走完全独立的一条蓝牙链路：FFE0/FFE1/FFE2，读蚂蚁板 7E A1 帧，跟控制器的 FFF0 互不干扰——不接电池，或者电池离线，仪表照常跑。\n\n连上后每秒要一次状态：SOC、总压、电流、单体电压与压差、各探头温度、MOS 开关与均衡状态。仪表页底部会多出一条电池条，点它进详情看单体柱状图和温度。\n\n广播里带 FFE0、或名字含 ANT / BMS / JBD / DALY / JK 的设备会被标成「疑似 BMS」排在最前，其余是普通蓝牙设备，拿不准就看信号强度。")
+        }
+    }
+
+    private var bmsColor: Color {
+        switch bms.phase {
+        case .online: return .green
+        case .connecting: return .yellow
+        case .scanning: return .orange
+        case .idle: return .secondary
         }
     }
 
@@ -789,6 +929,7 @@ struct SettingsView: View {
             LabeledContent("名称", value: AppInfo.name)
             LabeledContent("版本", value: AppInfo.versionText)
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
+            LabeledContent("电池协议", value: "蚂蚁板 7E A1 / FFE0·FFE1·FFE2")
             LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
             LabeledContent("测速", value: "GPS（CoreLocation）优先，轮速兜底")
             LabeledContent("屏幕方向", value: "横屏")
