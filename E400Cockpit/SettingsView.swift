@@ -30,6 +30,7 @@ struct SettingsView: View {
     @AppStorage("controller_label") private var controllerLabel = "未设置"
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("value_decimals") private var decimals = 2
+    @AppStorage("show_motor_temp") private var showMotorTemp = true
 
     @State private var showAdvanced = false
 
@@ -64,6 +65,7 @@ struct SettingsView: View {
         Form {
             connectionSection
             vehicleSection
+            sensorSection
             rearTireSection
             estimateSection
             frontTireSection
@@ -200,8 +202,19 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: 后轮（驱动轮）
+    // MARK: 传感器
 
+    private var sensorSection: some View {
+        Section {
+            Toggle("显示电机温度", isOn: $showMotorTemp)
+        } header: {
+            Text("传感器")
+        } footer: {
+            Text("有些车型的电机没有内置温感，协议里这个字段会恒为 0——关掉后仪表页不再显示该格，网格自动重排，也不会留一格永远 0.00 ℃ 的摆设数据。控制器温度始终显示。")
+        }
+    }
+
+    // MARK: 后轮（驱动轮）
     private var rearTireSection: some View {
         Section {
             HStack {
@@ -461,7 +474,7 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本", value: "0.1.2")
+            LabeledContent("版本", value: "0.1.3")
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
             LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
             LabeledContent("屏幕方向", value: "横屏")

@@ -121,6 +121,7 @@ struct ScanView: View {
 struct GaugePanel: View {
     @EnvironmentObject var central: CockpitCentral
     @AppStorage("vehicle_label") private var vehicleLabel = ""
+    @AppStorage("show_motor_temp") private var showMotorTemp = true
 
     private let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
 
@@ -207,30 +208,42 @@ struct GaugePanel: View {
     }
 
     private var cardData: [(String, String, Color)] {
+        var rows: [(String, String, Color)] = []
+
         guard let t = central.telemetry else {
-            return [
+            rows = [
                 ("母线电压", "——", .white),
                 ("母线电流", "——", .white),
                 ("功率", "——", .white),
-                ("控制器温度", "——", .white),
-                ("电机温度", "——", .white),
+                ("控制器温度", "——", .white)
+            ]
+            if showMotorTemp { rows.append(("电机温度", "——", .white)) }
+            rows += [
                 ("转把", "——", .white),
                 ("挡位", "——", .white),
                 ("故障码", "无", .green)
             ]
+            return rows
         }
+
         let faultColor: Color = t.fault == 0 ? .green : .red
-        return [
+        rows = [
             ("母线电压", Fmt.num(t.busVoltage, "V"), .white),
             ("母线电流", Fmt.num(t.busCurrent, "A"),
              t.busCurrent < -0.005 ? .green : (t.busCurrent > 0.005 ? .red : .white)),
             ("功率", Fmt.num(t.busVoltage * t.busCurrent / 1000.0, "kW"), .white),
-            ("控制器温度", Fmt.temp(t.controllerTemp), tempColor(t.controllerTemp)),
-            ("电机温度", Fmt.temp(t.motorTemp), tempColor(t.motorTemp)),
+            ("控制器温度", Fmt.temp(t.controllerTemp), tempColor(t.controllerTemp))
+        ]
+        // 电机没有温感的车可以直接关掉，避免一格永远 0.00 ℃ 的摆设
+        if showMotorTemp {
+            rows.append(("电机温度", Fmt.temp(t.motorTemp), tempColor(t.motorTemp)))
+        }
+        rows += [
             ("转把", t.throttlePercent.map { Fmt.percent($0) } ?? "——", .white),
             ("挡位", t.gear.map { "P\($0)" } ?? "——", .white),
             ("故障码", t.fault == 0 ? "无" : String(format: "0x%04X", t.fault & 0xFFFF), faultColor)
         ]
+        return rows
     }
 
     private func tempColor(_ v: Double?) -> Color {
