@@ -38,7 +38,7 @@ struct TireSpec {
         return String(format: "%.0f/%.0f-%.0f", widthMM, aspectPct, rimInch)
     }
 
-    var diameterText: String { String(format: "%.0f mm", freeDiameterMM) }
+    var diameterText: String { Fmt.num(freeDiameterMM, "mm") }
 }
 
 // MARK: - 估算结果
@@ -59,7 +59,7 @@ struct TireEstimate {
     /// 下沉量占自由半径的比例
     var deflectionRatioActual: Double
 
-    var shrinkPercentText: String { String(format: "−%.1f%%", shrinkRatio * 100) }
+    var shrinkPercentText: String { String(format: "−%.2f%%", shrinkRatio * 100) }
 }
 
 // MARK: - 模型

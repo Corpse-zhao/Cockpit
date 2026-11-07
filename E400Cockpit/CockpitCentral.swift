@@ -42,6 +42,10 @@ final class CockpitCentral: NSObject, ObservableObject {
     @Published var transportLabel: String?
     /// 实际发现到的服务/特征摘要，未知设备时用于 dump
     @Published var gattSummary: String?
+    /// 识别出的控制器身份（广播名 / 帧内字符串）
+    @Published var identity: ControllerIdentity?
+    /// 帧里扫出的型号候选，供设置页一键采用
+    @Published var modelCandidates: [String] = []
 
     static let serviceUUID = CBUUID(string: "FFF0")
     static let notifyUUID = CBUUID(string: "FFF1")
@@ -218,6 +222,21 @@ extension CockpitCentral: CBCentralManagerDelegate {
         lastTelemetryDate = Date()
         phase = .connected
         log("已连接 \(peripheral.name ?? "")，正在枚举全部 GATT 服务…")
+
+        // 1) 先用广播名识别型号，识别到就回填（仅在用户没手动填过时）
+        identity = ControllerIdentifier.fromName(peripheral.name)
+        modelCandidates.removeAll()
+        if let id = identity?.suggestedLabel {
+            log("识别到控制器：\(id)（来源：\(identity?.source ?? "")）")
+            let saved = UserDefaults.standard.string(forKey: "controller_label") ?? ""
+            if saved.isEmpty || saved == "未设置" || saved == "E400Max-CAN" {
+                UserDefaults.standard.set(id, forKey: "controller_label")
+                log("已自动填入控制器型号：\(id)")
+            }
+        } else {
+            log("广播名未匹配到已知品牌，可打开「显示所有蓝牙设备」后手动确认型号")
+        }
+
         // 不指定 UUID：未知控制器也能把服务结构 dump 出来
         peripheral.discoverServices(nil)
     }
@@ -369,6 +388,12 @@ extension CockpitCentral: CBPeripheralDelegate {
         guard characteristic.uuid == notifyChar?.uuid,
               let data = characteristic.value, !data.isEmpty else { return }
         let bytes = [UInt8](data)
+        // 帧里若藏有型号字符串（版本帧常见），收集成候选
+        for cand in ControllerIdentifier.asciiCandidates(in: bytes)
+        where !modelCandidates.contains(cand) && modelCandidates.count < 6 {
+            modelCandidates.append(cand)
+            log("帧内发现字符串：\(cand)")
+        }
         let wasCalibrated = driver.isCalibrated
         let t = driver.feed(bytes)
         appendConsole(bytes, t)

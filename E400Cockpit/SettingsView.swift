@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject var central: CockpitCentral
 
     // 轮胎
     @AppStorage(TireModel.Keys.rearSpec) private var rearSpec = "90/90-12 44J"
@@ -26,8 +27,9 @@ struct SettingsView: View {
     // 连接
     @AppStorage("scan_all_devices") private var scanAllDevices = false
     @AppStorage("last_transport") private var lastTransport = "未连接"
-    @AppStorage("controller_label") private var controllerLabel = "E400Max-CAN"
-    @AppStorage("vehicle_label") private var vehicleLabel = "九号 E80c MK2"
+    @AppStorage("controller_label") private var controllerLabel = "未设置"
+    @AppStorage("vehicle_label") private var vehicleLabel = ""
+    @AppStorage("value_decimals") private var decimals = 2
 
     @State private var showAdvanced = false
 
@@ -70,6 +72,10 @@ struct SettingsView: View {
             advancedSection
             aboutSection
         }
+        .frame(maxWidth: 920)
+        .frame(maxWidth: .infinity)
+        .scrollContentBackground(.hidden)
+        .background(Color.black.ignoresSafeArea())
     }
 
     // MARK: 连接
@@ -77,12 +83,84 @@ struct SettingsView: View {
     private var connectionSection: some View {
         Section {
             Toggle("扫描时显示所有蓝牙设备", isOn: $scanAllDevices)
+
+            HStack {
+                Text("控制器")
+                Spacer()
+                TextField("连接后自动识别", text: $controllerLabel)
+                    .multilineTextAlignment(.trailing)
+                    .autocorrectionDisabled()
+                    .frame(width: 190)
+            }
+
+            if let id = central.identity {
+                HStack(spacing: 6) {
+                    Text("已识别")
+                    Text(id.suggestedLabel ?? "—")
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    Text(id.source)
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    Spacer()
+                    if let s = id.suggestedLabel, s != controllerLabel {
+                        Button("采用") { controllerLabel = s }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                    }
+                }
+            }
+
+            if !central.modelCandidates.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("帧内发现的字符串（点击填入）")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(central.modelCandidates, id: \.self) { c in
+                                Button(c) { controllerLabel = c }
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Text("车型")
+                Spacer()
+                TextField("自己填，如 九号 E80c MK2", text: $vehicleLabel)
+                    .multilineTextAlignment(.trailing)
+                    .autocorrectionDisabled()
+                    .frame(width: 210)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text("数值小数位")
+                    Spacer()
+                    Text("速度固定整数")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+                Picker("数值小数位", selection: $decimals) {
+                    Text("0 位").tag(0)
+                    Text("1 位").tag(1)
+                    Text("2 位").tag(2)
+                    Text("3 位").tag(3)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
             LabeledContent("当前通道", value: lastTransport)
             LabeledContent("协议驱动", value: "凌博 Lingbo（AA55）")
         } header: {
-            Text("连接")
+            Text("连接与显示")
         } footer: {
-            Text("默认只列出 LBMC 开头的凌博控制器。打开开关后可连接任意 BLE 设备——换成别的品牌时，先连上看「数据台」的原始字节和 GATT 结构，再为它写一个协议驱动，蓝牙层和界面都不用改。")
+            Text("控制器型号连上后从广播名自动识别（LBMC- 后面那串），也会把数据帧里出现的可打印字符串收集成候选。车型和控制器都可以手改，改过之后不再自动覆盖。小数位影响电压/电流/功率/温度/转把，速度保持整数。")
         }
     }
 
@@ -174,19 +252,16 @@ struct SettingsView: View {
     private var estimateSection: some View {
         Section {
             if let e = rearEst {
-                LabeledContent("静态下沉量",
-                               value: String(format: "%.1f mm", e.staticDeflectionMM))
-                LabeledContent("滚动半径",
-                               value: String(format: "%.1f mm", e.rollRadiusMM))
-                LabeledContent("滚动周长",
-                               value: String(format: "%.0f mm", e.rollCircumferenceMM))
+                LabeledContent("静态下沉量", value: Fmt.num(e.staticDeflectionMM, "mm"))
+                LabeledContent("滚动半径", value: Fmt.num(e.rollRadiusMM, "mm"))
+                LabeledContent("滚动周长", value: Fmt.num(e.rollCircumferenceMM, "mm"))
                 LabeledContent("相对自由周长", value: e.shrinkPercentText)
 
                 HStack {
                     Text("当前生效周长")
                         .fontWeight(.semibold)
                     Spacer()
-                    Text(String(format: "%.0f mm", effectiveCirc))
+                    Text(Fmt.num(effectiveCirc, "mm"))
                         .fontWeight(.semibold)
                         .monospacedDigit()
                         .foregroundColor(.accentColor)
@@ -281,8 +356,8 @@ struct SettingsView: View {
                 Text("bar").foregroundColor(.gray)
             }
             if let e = frontEst {
-                LabeledContent("前轮下沉", value: String(format: "%.1f mm", e.staticDeflectionMM))
-                LabeledContent("前轮滚动周长", value: String(format: "%.0f mm", e.rollCircumferenceMM))
+                LabeledContent("前轮下沉", value: Fmt.num(e.staticDeflectionMM, "mm"))
+                LabeledContent("前轮滚动周长", value: Fmt.num(e.rollCircumferenceMM, "mm"))
             }
         } header: {
             Text("前轮（仅参考）")
@@ -308,9 +383,8 @@ struct SettingsView: View {
                 }
                 if let e = rearEst {
                     let diff = measuredCirc - e.rollCircumferenceMM
-                    LabeledContent("与估算差",
-                                   value: String(format: "%+.0f mm（%+.1f%%）",
-                                                 diff, diff / max(e.rollCircumferenceMM, 1) * 100))
+                    LabeledContent("与估算差", value: String(format: "%+.2f mm（%+.2f%%）",
+                                                       diff, diff / max(e.rollCircumferenceMM, 1) * 100))
                 }
             }
         } header: {
@@ -387,23 +461,10 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            HStack {
-                Text("控制器")
-                Spacer()
-                TextField("型号", text: $controllerLabel)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 150)
-            }
-            HStack {
-                Text("车型")
-                Spacer()
-                TextField("车型", text: $vehicleLabel)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 150)
-            }
-            LabeledContent("版本", value: "0.1.1")
+            LabeledContent("版本", value: "0.1.2")
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
             LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
+            LabeledContent("屏幕方向", value: "横屏")
         } header: {
             Text("关于")
         }
