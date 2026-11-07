@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import PhotosUI
 
 struct SettingsView: View {
@@ -38,6 +39,10 @@ struct SettingsView: View {
     @AppStorage("speed_source") private var speedSource = "auto"
     @State private var pickedWallpaper: PhotosPickerItem?
     @State private var hasWallpaper = WallpaperStore.url != nil
+    @State private var cropSource: UIImage?
+
+    // 主题
+    @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
 
     // 协议字段偏移覆盖
     @AppStorage("throttle_offset") private var throttleOffset = -1
@@ -47,7 +52,14 @@ struct SettingsView: View {
 
     @State private var showAdvanced = false
     @State private var showFieldOffsets = false
-    @State private var showGearFinder = false
+    @State private var activeSheet: ActiveSheet?
+
+    /// 同一个视图上挂多个 .sheet 在 iOS 16 会互相顶掉，统一走一个 item 枚举
+    private enum ActiveSheet: String, Identifiable {
+        case gearFinder
+        case crop
+        var id: String { rawValue }
+    }
 
     // MARK: 实时估算
 
@@ -100,15 +112,32 @@ struct SettingsView: View {
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self),
-                   WallpaperStore.save(data) {
-                    hasWallpaper = true
+                   WallpaperStore.saveSource(data),
+                   let img = WallpaperStore.sourceImage {
+                    cropSource = ImageTools.normalized(img)
+                    activeSheet = .crop
                 }
                 pickedWallpaper = nil
             }
         }
-        .sheet(isPresented: $showGearFinder) {
-            GearFinderView()
-                .environmentObject(central)
+        .sheet(item: $activeSheet) { which in
+            switch which {
+            case .gearFinder:
+                GearFinderView()
+                    .environmentObject(central)
+            case .crop:
+                if let src = cropSource {
+                    WallpaperCropView(
+                        source: src,
+                        onCancel: { activeSheet = nil },
+                        onDone: { img in
+                            WallpaperStore.saveCropped(img)
+                            hasWallpaper = true
+                            activeSheet = nil
+                        }
+                    )
+                }
+            }
         }
     }
 
@@ -116,10 +145,20 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         Section {
+            themePicker
+
             PhotosPicker(selection: $pickedWallpaper, matching: .images, photoLibrary: .shared()) {
                 Label(hasWallpaper ? "更换壁纸" : "选择壁纸图片", systemImage: "photo.on.rectangle.angled")
             }
             if hasWallpaper {
+                Button {
+                    if let img = WallpaperStore.sourceImage {
+                        cropSource = ImageTools.normalized(img)
+                        activeSheet = .crop
+                    }
+                } label: {
+                    Label("重新裁剪显示区域", systemImage: "crop")
+                }
                 Button(role: .destructive) {
                     WallpaperStore.clear()
                     hasWallpaper = false
@@ -137,7 +176,57 @@ struct SettingsView: View {
         } header: {
             Text("外观")
         } footer: {
-            Text("壁纸用横屏图片效果最好，左侧会自动压暗保证数据可读。圆盘指针指示的是车速，满量程默认 140 km/h，刻度按 0 / 20 / … / 140 均分 270°。开机自检时指针走 0→满→0→满→0 一个完整轮回，随后数据卡片浮现。")
+            Text("壁纸导入后可以拖动、双指缩放来挑显示区域，框内就是仪表页真正显示的范围，原始图会单独留存，随时能重新裁剪而不会越裁越糊。\n\n主题色只改强调色这一条主轴（进度弧、发光、关键数值、按钮），毛玻璃卡片和白色刻度保持不变。圆盘指针指示车速，满量程默认 140 km/h。")
+        }
+    }
+
+    // MARK: 主题色
+
+    private var themePicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("主题色")
+                    .font(.subheadline)
+                Spacer()
+                Text(ThemeStore.preset(for: themeID).title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(ThemePreset.allCases) { p in
+                        Button {
+                            themeID = p.rawValue
+                        } label: {
+                            VStack(spacing: 5) {
+                                Circle()
+                                    .fill(LinearGradient(colors: p.gradientColors,
+                                                         startPoint: .topLeading,
+                                                         endPoint: .bottomTrailing))
+                                    .frame(width: 34, height: 34)
+                                    .overlay(
+                                        Circle().stroke(Color.white,
+                                                        lineWidth: themeID == p.rawValue ? 2.5 : 0)
+                                    )
+                                    .overlay(
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 13, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .shadow(radius: 2)
+                                            .opacity(themeID == p.rawValue ? 1 : 0)
+                                    )
+                                    .shadow(color: p.accent.opacity(0.6), radius: 6)
+                                Text(p.title)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(themeID == p.rawValue ? .primary : .secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 2)
+            }
         }
     }
 
@@ -545,7 +634,7 @@ struct SettingsView: View {
     private var fieldOffsetSection: some View {
         Section {
             Button {
-                showGearFinder = true
+                activeSheet = .gearFinder
             } label: {
                 Label("打开挡位定位工具（差分找偏移）", systemImage: "scope")
                     .font(.subheadline)
@@ -697,7 +786,7 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本", value: "0.3.0")
+            LabeledContent("版本", value: "0.3.1")
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
             LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
             LabeledContent("测速", value: "GPS（CoreLocation）优先，轮速兜底")

@@ -13,6 +13,9 @@ struct GearFinderView: View {
     @AppStorage("gear_short_fallback") private var gearShortFallback = false
     @AppStorage("gear_manual") private var manualGear = 0
     @AppStorage("long_realtime_request") private var longRealtime = false
+    @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
+
+    private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
 
     @State private var baseRealtime: [UInt8] = []
     @State private var baseConfig: [UInt8] = []
@@ -182,11 +185,11 @@ struct GearFinderView: View {
 
             Toggle("向控制器要「长帧」（AA 55 1A 22 3B）", isOn: $longRealtime)
                 .font(.subheadline)
-                .tint(NeonTheme.pink)
+                .tint(theme.accent)
 
             Toggle("短帧挡位回退（读 @24 低 4 位）", isOn: $gearShortFallback)
                 .font(.subheadline)
-                .tint(NeonTheme.pink)
+                .tint(theme.accent)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("手动挡位（控制器确实不报时用）")
@@ -277,7 +280,7 @@ struct GearFinderView: View {
                             .background(
                                 RoundedRectangle(cornerRadius: 3)
                                     .fill(isKnownField(i)
-                                          ? NeonTheme.pink.opacity(0.30)
+                                          ? theme.accent.opacity(0.30)
                                           : Color.white.opacity(0.05))
                             )
                     }
@@ -297,7 +300,7 @@ struct GearFinderView: View {
                 HStack(spacing: 10) {
                     Text("@\(i)")
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(NeonTheme.pinkLight)
+                        .foregroundColor(theme.accentLight)
                         .frame(width: 36, alignment: .leading)
                     Text(String(format: "%02X → %02X", base[i], live[i]))
                         .font(.system(size: 12, design: .monospaced))

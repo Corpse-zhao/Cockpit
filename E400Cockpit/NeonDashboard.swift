@@ -2,25 +2,20 @@ import SwiftUI
 import UIKit
 import PhotosUI
 
-// MARK: - 主题色
-
-enum NeonTheme {
-    /// 主色：品红 #DB0D6B
-    static let pink = Color(red: 0.859, green: 0.051, blue: 0.420)
-    static let pinkLight = Color(red: 1.0, green: 0.36, blue: 0.66)
-    static let cardTop = Color.white.opacity(0.10)
-    static let cardBottom = Color.black.opacity(0.34)
-    static let hairline = Color.white.opacity(0.14)
-}
-
 // MARK: - 壁纸存储
 
 enum WallpaperStore {
     static let key = "wallpaper_file"
+    /// 原图（未裁剪）：留着它才能反复重新裁剪而不掉画质
+    static let sourceName = "wallpaper_source.jpg"
+    static let croppedName = "wallpaper.jpg"
+
+    private static var dir: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
 
     static var url: URL? {
         guard let name = UserDefaults.standard.string(forKey: key), !name.isEmpty else { return nil }
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let u = dir.appendingPathComponent(name)
         return FileManager.default.fileExists(atPath: u.path) ? u : nil
     }
@@ -30,18 +25,37 @@ enum WallpaperStore {
         return UIImage(contentsOfFile: u.path)
     }
 
+    /// 未经裁剪的原图
+    static var sourceImage: UIImage? {
+        let u = dir.appendingPathComponent(sourceName)
+        guard FileManager.default.fileExists(atPath: u.path) else { return nil }
+        return UIImage(contentsOfFile: u.path)
+    }
+
+    /// 保存原图（只在「选新壁纸」时调用）。裁剪另走 saveCropped。
     @discardableResult
-    static func save(_ data: Data) -> Bool {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let name = "wallpaper.jpg"
-        let u = dir.appendingPathComponent(name)
+    static func saveSource(_ data: Data) -> Bool {
+        let u = dir.appendingPathComponent(sourceName)
         do {
-            if let img = UIImage(data: data), let jpg = img.jpegData(compressionQuality: 0.86) {
+            if let img = UIImage(data: data), let jpg = img.jpegData(compressionQuality: 0.94) {
                 try jpg.write(to: u, options: .atomic)
             } else {
                 try data.write(to: u, options: .atomic)
             }
-            UserDefaults.standard.set(name, forKey: key)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// 保存裁剪结果，并 bump 版本号让仪表页刷新
+    @discardableResult
+    static func saveCropped(_ image: UIImage) -> Bool {
+        let u = dir.appendingPathComponent(croppedName)
+        guard let jpg = image.jpegData(compressionQuality: 0.88) else { return false }
+        do {
+            try jpg.write(to: u, options: .atomic)
+            UserDefaults.standard.set(croppedName, forKey: key)
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "wallpaper_version")
             return true
         } catch {
@@ -50,8 +64,8 @@ enum WallpaperStore {
     }
 
     static func clear() {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        try? FileManager.default.removeItem(at: dir.appendingPathComponent("wallpaper.jpg"))
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent(croppedName))
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent(sourceName))
         UserDefaults.standard.removeObject(forKey: key)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "wallpaper_version")
     }
@@ -61,6 +75,9 @@ enum WallpaperStore {
 
 struct WallpaperBackground: View {
     @AppStorage("wallpaper_version") private var version = 0.0
+    @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
+
+    private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
 
     var body: some View {
         GeometryReader { geo in
@@ -80,19 +97,15 @@ struct WallpaperBackground: View {
                         ],
                         startPoint: .leading, endPoint: .trailing
                     )
-                    // 品红叠色，统一色调
-                    NeonTheme.pink.opacity(0.16)
+                    // 主题色叠色，统一色调
+                    theme.accent.opacity(0.16)
                 } else {
                     LinearGradient(
-                        colors: [
-                            Color(red: 0.09, green: 0.01, blue: 0.06),
-                            Color(red: 0.40, green: 0.02, blue: 0.24),
-                            Color(red: 0.05, green: 0.01, blue: 0.04)
-                        ],
+                        colors: [theme.baseDark, theme.deep, theme.baseDark],
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     )
                     Circle()
-                        .fill(NeonTheme.pink.opacity(0.45))
+                        .fill(theme.accent.opacity(0.45))
                         .frame(width: geo.size.height * 1.1)
                         .blur(radius: 100)
                         .offset(x: geo.size.width * 0.28, y: -geo.size.height * 0.18)
@@ -114,6 +127,9 @@ struct NeonGauge: View {
     var voltage: Double
     var maxSpeed: Double        // 满量程车速，默认 140
 
+    @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
+    private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
+
     private let sweep: Double = 270
     /// 主刻度数量：0,20,40…140 共 8 个
     private var majorCount: Int { 8 }
@@ -133,11 +149,11 @@ struct NeonGauge: View {
                     .fill(Color.black.opacity(0.55))
                     .frame(width: side * 0.64, height: side * 0.64)
                 Circle()
-                    .stroke(NeonTheme.pink.opacity(0.75), lineWidth: 2)
+                    .stroke(theme.accent.opacity(0.75), lineWidth: 2)
                     .frame(width: side * 0.64, height: side * 0.64)
                     .blur(radius: 5)
                 Circle()
-                    .stroke(NeonTheme.pink.opacity(0.35), lineWidth: 1)
+                    .stroke(theme.accent.opacity(0.35), lineWidth: 1)
                     .frame(width: side * 0.64, height: side * 0.64)
 
                 // 轨道（270° 白弧）
@@ -152,7 +168,7 @@ struct NeonGauge: View {
                     Circle()
                         .trim(from: 0, to: sweep / 360 * p)
                         .stroke(
-                            LinearGradient(colors: [NeonTheme.pink, NeonTheme.pinkLight],
+                            LinearGradient(colors: theme.gradientColors,
                                            startPoint: .leading, endPoint: .trailing),
                             style: StrokeStyle(lineWidth: ring, lineCap: .butt)
                         )
@@ -193,10 +209,10 @@ struct NeonGauge: View {
                     path.addLine(to: CGPoint(x: cx + cos(rad) * (R - ring * 0.2),
                                              y: cy + sin(rad) * (R - ring * 0.2)))
                 }
-                .stroke(Color(red: 1.0, green: 0.18, blue: 0.22),
+                .stroke(theme.needle,
                         style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
                 Circle()
-                    .fill(Color(red: 1.0, green: 0.18, blue: 0.22))
+                    .fill(theme.needle)
                     .frame(width: side * 0.028, height: side * 0.028)
 
                 // 中心读数：速度为主，下面补功率与电压/温度（不再显示转速）
@@ -256,6 +272,9 @@ struct NeonStatusPanel: View {
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("show_motor_temp") private var showMotorTemp = true
     @AppStorage("gear_manual") private var manualGear = 0
+    @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
+
+    private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -311,7 +330,7 @@ struct NeonStatusPanel: View {
                     Image(systemName: "xmark.circle.fill")
                     Text("断开").font(.system(size: 12))
                 }
-                .foregroundColor(NeonTheme.pinkLight)
+                .foregroundColor(theme.accentLight)
             }
         }
         .padding(.horizontal, 11)
@@ -397,7 +416,7 @@ struct NeonStatusPanel: View {
             ("母线电压", t.map { Fmt.num($0.busVoltage, "V") } ?? "——", .white),
             ("母线电流", t.map { Fmt.num($0.busCurrent, "A") } ?? "——",
              (t?.busCurrent ?? 0) < -0.005 ? Color(red: 0.2, green: 0.95, blue: 0.55)
-                : ((t?.busCurrent ?? 0) > 0.005 ? NeonTheme.pinkLight : .white)),
+                : ((t?.busCurrent ?? 0) > 0.005 ? theme.accentLight : .white)),
             ("功率", t.map { Fmt.num($0.busVoltage * $0.busCurrent / 1000.0, "kW") } ?? "——", .white),
             ("定位", gpsText, gpsColor)
         ]

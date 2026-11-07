@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct E400CockpitApp: App {
     @StateObject private var central = CockpitCentral()
+    @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
 
     var body: some Scene {
         WindowGroup {
@@ -16,7 +17,7 @@ struct E400CockpitApp: App {
             }
             .environmentObject(central)
             .preferredColorScheme(.dark)
-            .tint(.red)
+            .tint(ThemeStore.preset(for: themeID).accent)
         }
     }
 }
