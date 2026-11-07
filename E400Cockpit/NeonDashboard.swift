@@ -196,26 +196,26 @@ struct NeonGauge: View {
                     .fill(Color(red: 1.0, green: 0.18, blue: 0.22))
                     .frame(width: side * 0.028, height: side * 0.028)
 
-                // 中心读数
+                // 中心读数（速度在上，转速在下）
                 VStack(spacing: 0) {
-                    Text(rpmLarge)
-                        .font(.system(size: side * 0.145, weight: .bold, design: .rounded))
+                    Text(Fmt.speed(speed))
+                        .font(.system(size: side * 0.132, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .minimumScaleFactor(0.6)
                         .lineLimit(1)
-                    Text("×1000 rpm")
+                    Text("km/h")
                         .font(.system(size: side * 0.040))
                         .foregroundColor(.white.opacity(0.62))
                         .padding(.top, -side * 0.005)
 
                     divider(side: side)
 
-                    Text(Fmt.speed(speed))
-                        .font(.system(size: side * 0.125, weight: .bold, design: .rounded))
+                    Text(rpmLarge)
+                        .font(.system(size: side * 0.140, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .minimumScaleFactor(0.6)
                         .lineLimit(1)
-                    Text("km/h")
+                    Text("×1000 rpm")
                         .font(.system(size: side * 0.040))
                         .foregroundColor(.white.opacity(0.62))
                         .padding(.top, -side * 0.005)
@@ -260,27 +260,33 @@ struct NeonStatusPanel: View {
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("show_motor_temp") private var showMotorTemp = true
 
-    private let cols = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
-
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             header
-            LazyVGrid(columns: cols, spacing: 8) {
-                ForEach(tiles.indices, id: \.self) { i in
-                    let t = tiles[i]
-                    tile(t.0, t.1, t.2)
-                }
+            VStack(spacing: 9) {
+                tileRow(0..<4)
+                tileRow(4..<8)
             }
-            Spacer(minLength: 0)
+            .frame(maxHeight: .infinity)
             footer
         }
+    }
+
+    private func tileRow(_ range: Range<Int>) -> some View {
+        HStack(spacing: 9) {
+            ForEach(Array(range), id: \.self) { i in
+                let t = tiles[i]
+                tile(t.0, t.1, t.2)
+            }
+        }
+        .frame(maxHeight: .infinity)
     }
 
     private var header: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(central.connectedName ?? "LBMC")
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
+                    .font(.system(size: 16, weight: .bold, design: .monospaced))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 HStack(spacing: 5) {
@@ -288,13 +294,13 @@ struct NeonStatusPanel: View {
                         .fill(central.phase == .online ? Color(red: 0.2, green: 0.95, blue: 0.55) : .orange)
                         .frame(width: 6, height: 6)
                     Text(central.phase.rawValue)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundColor(central.phase == .online ? Color(red: 0.2, green: 0.95, blue: 0.55) : .orange)
                     if !vehicleLabel.isEmpty {
                         Text("·")
                             .foregroundColor(.white.opacity(0.35))
                         Text(vehicleLabel)
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.55))
                             .lineLimit(1)
                     }
@@ -306,7 +312,7 @@ struct NeonStatusPanel: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "xmark.circle.fill")
-                    Text("断开").font(.system(size: 11))
+                    Text("断开").font(.system(size: 12))
                 }
                 .foregroundColor(NeonTheme.pinkLight)
             }
@@ -322,7 +328,7 @@ struct NeonStatusPanel: View {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 9))
                 Text("周长 \(Fmt.num(central.wheelCircMM, "mm")) · \(central.wheelCircSource)")
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: 10, design: .monospaced))
             }
             .foregroundColor(.white.opacity(0.55))
 
@@ -330,10 +336,10 @@ struct NeonStatusPanel: View {
 
             HStack(spacing: 5) {
                 Text("本次")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.5))
                 Text(String(format: "%.2f km", central.tripKm))
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .foregroundColor(.white)
             }
         }
@@ -377,20 +383,22 @@ struct NeonStatusPanel: View {
     }
 
     private func tile(_ key: String, _ value: String, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(key)
-                .font(.system(size: 9))
-                .foregroundColor(.white.opacity(0.58))
+                .font(.system(size: 10.5))
+                .foregroundColor(.white.opacity(0.60))
                 .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Spacer(minLength: 0)
             Text(value)
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(.system(size: 23, weight: .bold, design: .rounded))
                 .foregroundColor(color)
                 .lineLimit(1)
-                .minimumScaleFactor(0.5)
+                .minimumScaleFactor(0.45)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .glassCard()
     }
 }
@@ -525,16 +533,19 @@ struct NeonDashboard: View {
         bootProgress = 0
         bootRPM = 0
 
-        let sweep = 1.05        // 满量程扫描
-        let fallBack = 0.48     // 回零
+        let lap = 0.70          // 单圈扫描时长
+        let laps: Double = 2    // 扫两圈
+        let sweep = lap * laps
+        let fallBack = 0.42     // 回零
         let started = Date()
 
         bootTimer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { timer in
             let elapsed = Date().timeIntervalSince(started)
 
             if elapsed <= sweep {
-                let k = elapsed / sweep
-                let eased = 1 - pow(1 - k, 2.1)     // easeOut：前快后慢
+                // 每圈都从 0 扫到满量程，圈末瞬间跳回 0 再扫
+                let inLap = elapsed.truncatingRemainder(dividingBy: lap) / lap
+                let eased = 1 - pow(1 - inLap, 2.1)     // easeOut：前快后慢
                 bootProgress = eased
                 bootRPM = maxRPM * eased
             } else if elapsed <= sweep + fallBack {
