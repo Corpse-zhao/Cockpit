@@ -20,6 +20,8 @@ struct DashboardView: View {
 
 struct ScanView: View {
     @EnvironmentObject var central: CockpitCentral
+    @AppStorage("vehicle_label") private var vehicleLabel = "九号 E80c MK2"
+    @AppStorage("scan_all_devices") private var scanAllDevices = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -29,12 +31,12 @@ struct ScanView: View {
                 .foregroundColor(.red)
             Text("E400 Cockpit")
                 .font(.largeTitle.bold())
-            Text("凌博 E400 · 蓝牙直连仪表")
+            Text("\(vehicleLabel) · 蓝牙直连仪表")
                 .foregroundColor(.secondary)
             Button {
                 central.startScan()
             } label: {
-                Label(central.phase == .scanning ? "扫描中…" : "扫描 LBMC 设备",
+                Label(central.phase == .scanning ? "扫描中…" : (scanAllDevices ? "扫描全部设备" : "扫描 LBMC 设备"),
                       systemImage: "dot.radiowaves.left.and.right")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
@@ -54,9 +56,19 @@ struct ScanView: View {
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(d.name)
-                                .font(.body.monospaced().bold())
-                                .foregroundColor(.white)
+                            HStack(spacing: 6) {
+                                Text(d.name)
+                                    .font(.body.monospaced().bold())
+                                    .foregroundColor(.white)
+                                if d.isKnown {
+                                    Text("凌博")
+                                        .font(.caption2)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(Color.red.opacity(0.25)))
+                                        .foregroundColor(.red)
+                                }
+                            }
                             Text("信号 \(d.rssi) dBm")
                                 .font(.caption)
                                 .foregroundColor(.gray)

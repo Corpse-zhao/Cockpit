@@ -17,6 +17,8 @@ final class CockpitCentral: NSObject, ObservableObject {
         let id: UUID
         let name: String
         var rssi: Int
+        /// 是否为已知控制器（LBMC 前缀）
+        var isKnown: Bool = false
     }
 
     struct ConsoleLine: Identifiable {
@@ -36,21 +38,33 @@ final class CockpitCentral: NSObject, ObservableObject {
     /// 当前生效的滚动周长（mm），供仪表页显示来源
     @Published var wheelCircMM: Double = 1426
     @Published var wheelCircSource: String = "估算"
+    /// 连上后实际用的是哪个通道，如 "FFF0 (凌博/通用)"
+    @Published var transportLabel: String?
+    /// 实际发现到的服务/特征摘要，未知设备时用于 dump
+    @Published var gattSummary: String?
 
     static let serviceUUID = CBUUID(string: "FFF0")
     static let notifyUUID = CBUUID(string: "FFF1")
     static let writeUUID = CBUUID(string: "FFF2")
     static let namePrefix = "LBMC"
     static let defaultWheelCircMM: Double = 1466
+    /// 设置项：扫描时是否显示全部蓝牙设备（默认只显示 LBMC）
+    static let showAllDevicesKey = "scan_all_devices"
 
     private var manager: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var notifyChar: CBCharacteristic?
     private var writeChar: CBCharacteristic?
-    private let parser = LingboParser()
+    /// 协议驱动：默认凌博，换品牌只需换这一行 + 新增驱动文件
+    private var driver: ControllerDriver = ControllerDrivers.makeDefault()
     private var pollTimer: Timer?
     private var lastTelemetryDate = Date.distantPast
     private var reconnectAttempts = 0
+    /// 防止多个服务重复触发轮询
+    private var pollingStarted = false
+    /// 未知设备自动探测：待枚举的服务数与候选通道
+    private var pendingServiceCount = 0
+    private var autoCandidates: [(CBUUID, CBCharacteristic, CBCharacteristic)] = []
 
     // MARK: - 对外操作
 
@@ -103,7 +117,7 @@ final class CockpitCentral: NSObject, ObservableObject {
 
     @objc private func tick() {
         guard let p = peripheral, let w = writeChar else { return }
-        let cmd = parser.calibration.calibrated ? Lingbo.realtimeRequest : Lingbo.calibrationRequest
+        let cmd = driver.nextRequestFrame()
         p.writeValue(Data(cmd), for: w, type: .withoutResponse)
     }
 
@@ -179,23 +193,33 @@ extension CockpitCentral: CBCentralManagerDelegate {
         let name = peripheral.name
             ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
             ?? "未知设备"
-        guard name.hasPrefix(CockpitCentral.namePrefix) else { return }
+        let isLingbo = name.hasPrefix(CockpitCentral.namePrefix)
+        let showAll = UserDefaults.standard.bool(forKey: CockpitCentral.showAllDevicesKey)
+        guard isLingbo || showAll else { return }
         if let idx = devices.firstIndex(where: { $0.id == peripheral.identifier }) {
             devices[idx].rssi = RSSI.intValue
+            devices[idx].isKnown = isLingbo
         } else {
-            devices.append(DiscoveredDevice(id: peripheral.identifier, name: name, rssi: RSSI.intValue))
+            devices.append(DiscoveredDevice(id: peripheral.identifier, name: name,
+                                            rssi: RSSI.intValue, isKnown: isLingbo))
+            // 已知控制器排前面
+            devices.sort { ($0.isKnown ? 0 : 1, $0.name) < ($1.isKnown ? 0 : 1, $1.name) }
         }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         reconnectAttempts = 0
         connectedName = peripheral.name
-        parser.reset()
+        driver.reset()
+        transportLabel = nil
+        gattSummary = nil
+        pollingStarted = false
         tripKm = 0
         lastTelemetryDate = Date()
         phase = .connected
-        log("已连接 \(peripheral.name ?? "")，开始发现服务 FFF0…")
-        peripheral.discoverServices([CockpitCentral.serviceUUID])
+        log("已连接 \(peripheral.name ?? "")，正在枚举全部 GATT 服务…")
+        // 不指定 UUID：未知控制器也能把服务结构 dump 出来
+        peripheral.discoverServices(nil)
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -207,6 +231,10 @@ extension CockpitCentral: CBCentralManagerDelegate {
         phase = .idle
         notifyChar = nil
         writeChar = nil
+        pollingStarted = false
+        pendingServiceCount = 0
+        autoCandidates.removeAll()
+        transportLabel = nil
         pollTimer?.invalidate()
         pollTimer = nil
         connectedName = nil
@@ -229,30 +257,105 @@ extension CockpitCentral: CBCentralManagerDelegate {
 extension CockpitCentral: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let svc = peripheral.services?.first(where: { $0.uuid == CockpitCentral.serviceUUID }) else {
-            log("未找到 FFF0 服务（协议不匹配？）")
+        if let error {
+            log("发现服务失败：\(error.localizedDescription)")
             return
         }
-        log("发现 FFF0 服务，订阅 FFF1 / 找 FFF2…")
-        peripheral.discoverCharacteristics([CockpitCentral.notifyUUID, CockpitCentral.writeUUID], for: svc)
+        let services = peripheral.services ?? []
+        gattSummary = services.map { $0.uuid.uuidString }.joined(separator: " / ")
+        log("发现 \(services.count) 个服务：\(gattSummary ?? "无")")
+
+        // 优先级 1：命中已知通道（凌博 FFF0），直接按对照表订阅
+        if let known = services.first(where: { $0.uuid == CockpitCentral.serviceUUID }) {
+            transportLabel = "FFF0（凌博 / 通用透传）"
+            log("命中 FFF0，按凌博通道订阅 FFF1 / FFF2")
+            peripheral.discoverCharacteristics(nil, for: known)
+            return
+        }
+
+        // 优先级 2：未知设备 → 全量枚举，找"可写 + 可通知"的组合
+        log("未命中 FFF0，转为自动探测：遍历所有服务查找通知/写入特征")
+        autoCandidates.removeAll()
+        pendingServiceCount = services.count
+        for s in services {
+            peripheral.discoverCharacteristics(nil, for: s)
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        for c in service.characteristics ?? [] {
-            if c.uuid == CockpitCentral.notifyUUID {
-                notifyChar = c
-                peripheral.setNotifyValue(true, for: c)
-            }
-            if c.uuid == CockpitCentral.writeUUID {
-                writeChar = c
-            }
-        }
-        if writeChar != nil, notifyChar != nil {
-            log("FFF1(通知) + FFF2(写入) 就绪，开始轮询")
-            beginPolling()
+        let chars = service.characteristics ?? []
+        let uuidText = service.uuid.uuidString
+
+        if let error {
+            log("\(uuidText) 特征失败：\(error.localizedDescription)")
+        } else if chars.isEmpty {
+            log("\(uuidText) 无特征")
         } else {
-            log("缺少 FFF1/FFF2 特征，无法通信")
+            let desc = chars.map { c -> String in
+                var p: [String] = []
+                if c.properties.contains(.read) { p.append("R") }
+                if c.properties.contains(.write) { p.append("W") }
+                if c.properties.contains(.writeWithoutResponse) { p.append("WNR") }
+                if c.properties.contains(.notify) { p.append("N") }
+                if c.properties.contains(.indicate) { p.append("I") }
+                return "\(c.uuid.uuidString)[\(p.joined(separator: "+"))]"
+            }.joined(separator: " ")
+            log("\(uuidText): \(desc)")
         }
+
+        let hint = ControllerDrivers.knownTransports.first {
+            $0.service.uppercased() == uuidText.uppercased()
+        }
+
+        if let hint {
+            // 已知通道：严格按对照表绑定
+            for c in chars {
+                if c.uuid.uuidString.uppercased() == hint.notify.uppercased(),
+                   c.properties.contains(.notify) || c.properties.contains(.indicate) {
+                    notifyChar = c
+                }
+                if c.uuid.uuidString.uppercased() == hint.write.uppercased(),
+                   c.properties.contains(.write) || c.properties.contains(.writeWithoutResponse) {
+                    writeChar = c
+                }
+            }
+        } else {
+            // 未知通道：同一条服务里凑一对"通知 + 写入"
+            let n = chars.first {
+                $0.properties.contains(.notify) || $0.properties.contains(.indicate)
+            }
+            let w = chars.first {
+                $0.properties.contains(.writeWithoutResponse) || $0.properties.contains(.write)
+            }
+            if let n, let w {
+                autoCandidates.append((service.uuid, n, w))
+            }
+        }
+
+        // 未知设备：等所有服务都枚举完，取第一个可用的候选对
+        if pendingServiceCount > 0 {
+            pendingServiceCount -= 1
+            if pendingServiceCount == 0, writeChar == nil || notifyChar == nil,
+               let best = autoCandidates.first {
+                notifyChar = best.1
+                writeChar = best.2
+                transportLabel = "\(best.0.uuidString)（自动探测）"
+            }
+        }
+
+        startIfReady(on: peripheral)
+    }
+
+    /// 通知/写入都齐了就开始订阅与轮询，且只做一次
+    private func startIfReady(on peripheral: CBPeripheral) {
+        guard !pollingStarted, let n = notifyChar, let w = writeChar else { return }
+        pollingStarted = true
+        peripheral.setNotifyValue(true, for: n)
+        log("通道就绪：通知 \(n.uuid.uuidString) → 写入 \(w.uuid.uuidString)")
+        log("协议驱动：\(driver.displayName)，开始 500ms 轮询")
+        UserDefaults.standard.set(transportLabel ?? "\(n.uuid.uuidString)",
+                                  forKey: "last_transport")
+        beginPolling()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
@@ -262,14 +365,15 @@ extension CockpitCentral: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == CockpitCentral.notifyUUID,
+        // 用实际绑定的通知特征判断，不再写死 FFF1
+        guard characteristic.uuid == notifyChar?.uuid,
               let data = characteristic.value, !data.isEmpty else { return }
         let bytes = [UInt8](data)
-        let wasCalibrated = parser.calibration.calibrated
-        let t = parser.feed(bytes)
+        let wasCalibrated = driver.isCalibrated
+        let t = driver.feed(bytes)
         appendConsole(bytes, t)
-        if !wasCalibrated, parser.calibration.calibrated {
-            log("标定完成：电流分母=\(parser.calibration.busCurrentDiv) 电压分母=\(parser.calibration.busVoltageDiv)")
+        if !wasCalibrated, driver.isCalibrated {
+            log("标定完成：\(driver.calibrationSummary ?? "")")
             if phase != .online { phase = .calibrated }
         }
         if let t {

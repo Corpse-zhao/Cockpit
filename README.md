@@ -6,6 +6,28 @@
 - **握手**：`AA 55 02 20 21` 读标定（换算分母）→ `AA 55 02 22 23` 读实时（rpm / 母线电压电流 / 双温度 / 故障 / 转把 / 挡位）
 - **构建**：xcodegen 生成工程，GitHub Actions（macOS）编译 unsigned → ad-hoc 签名 → IPA Release
 
+## 支持范围（能连谁）
+
+内置蓝牙只是物理层，"能不能用"取决于协议。当前状态：
+
+| 控制器 | 能否使用 | 说明 |
+|---|---|---|
+| 凌博全系（LBMC + FFF0/FFF1/FFF2 + AA55） | **直接可用** | 电压/电流换算分母是运行时从 `0x60` 帧读的，不写死，所以 E300/E400 各电压平台都通用 |
+| 其他走 FFF0 / FFE0 / Nordic UART 透传的设备 | **能连、能看字节** | GATT 自动探测可配对通道，原始帧在「数据台」可见；要显示数值必须新增一个协议驱动 |
+| 私有或加密协议（九号原厂中控、小牛、博世等） | 通常不行 | 能建立 BLE 连接，但请求无有效应答 |
+
+### 三层结构（换品牌只动最上面一层）
+
+```
+传输层  CockpitCentral      FFF0 优先；未命中则全量枚举服务，自动配对 notify+write
+驱动层  ControllerDriver    协议接口。LingboParser 已实现，对应凌博 AA55
+应用层  Dashboard/Console/Settings   与品牌无关，只消费 Telemetry
+```
+
+加一个新品牌 = 新建一个 `XxxDriver.swift` 实现 `ControllerDriver`（五个成员：`displayName` / `isCalibrated` / `calibrationSummary` / `nextRequestFrame()` / `feed()`），再把 `ControllerDrivers.makeDefault()` 换成它。蓝牙层和三个页面一行都不用改。
+
+调试未知控制器时：设置页打开「扫描时显示所有蓝牙设备」→ 连接 → 看「数据台」里的服务/特征清单与十六进制流，照真实帧写驱动。
+
 ## 车速标定：轮胎受压模型
 
 不用手量周长也能算准。填轮胎规格、胎压、车重、人重，App 自己估下沉量：

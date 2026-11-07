@@ -51,30 +51,30 @@ jobs:
           /usr/bin/codesign -dv "$APP" 2>&1 || true
           rm -rf Payload && mkdir -p Payload
           cp -R "$APP" Payload/
-          zip -qry "E400Cockpit-v0.1.0.ipa" Payload
-          ls -lh E400Cockpit-v0.1.0.ipa
-          unzip -l E400Cockpit-v0.1.0.ipa | head -20
+          zip -qry "E400Cockpit-v0.1.1.ipa" Payload
+          ls -lh E400Cockpit-v0.1.1.ipa
+          unzip -l E400Cockpit-v0.1.1.ipa | head -20
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: E400Cockpit-ipa
-          path: E400Cockpit-v0.1.0.ipa
+          path: E400Cockpit-v0.1.1.ipa
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0
-          name: E400Cockpit v0.1.0
+          tag_name: v0.1.1
+          name: E400Cockpit v0.1.1
           body: |
-            凌博 E400 蓝牙仪表 v0.1.0
+            凌博 E400 蓝牙仪表 v0.1.1
 
             - BLE 直连（FFF0 / FFF1 / FFF2）
             - 凌博协议 AA55 解析（标定握手 + 实时帧）
             - 仪表页 / 数据台（原始帧监视）/ 设置（轮周长标定）
 
             ad-hoc 签名，越狱设备经 TrollStore / AppSync / Sideloadly 安装。
-          files: E400Cockpit-v0.1.0.ipa
+          files: E400Cockpit-v0.1.1.ipa
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

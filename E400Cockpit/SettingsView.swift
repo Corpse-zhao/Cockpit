@@ -23,6 +23,12 @@ struct SettingsView: View {
     @AppStorage(TireModel.Keys.deflectionRatio) private var deflectionRatio = 0.060
     @AppStorage(TireModel.Keys.rollFactor) private var rollFactor = 0.62
 
+    // 连接
+    @AppStorage("scan_all_devices") private var scanAllDevices = false
+    @AppStorage("last_transport") private var lastTransport = "未连接"
+    @AppStorage("controller_label") private var controllerLabel = "E400Max-CAN"
+    @AppStorage("vehicle_label") private var vehicleLabel = "九号 E80c MK2"
+
     @State private var showAdvanced = false
 
     // MARK: 实时估算
@@ -54,6 +60,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            connectionSection
             vehicleSection
             rearTireSection
             estimateSection
@@ -62,6 +69,20 @@ struct SettingsView: View {
             rpmSection
             advancedSection
             aboutSection
+        }
+    }
+
+    // MARK: 连接
+
+    private var connectionSection: some View {
+        Section {
+            Toggle("扫描时显示所有蓝牙设备", isOn: $scanAllDevices)
+            LabeledContent("当前通道", value: lastTransport)
+            LabeledContent("协议驱动", value: "凌博 Lingbo（AA55）")
+        } header: {
+            Text("连接")
+        } footer: {
+            Text("默认只列出 LBMC 开头的凌博控制器。打开开关后可连接任意 BLE 设备——换成别的品牌时，先连上看「数据台」的原始字节和 GATT 结构，再为它写一个协议驱动，蓝牙层和界面都不用改。")
         }
     }
 
@@ -366,10 +387,23 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本", value: "0.1.0")
+            HStack {
+                Text("控制器")
+                Spacer()
+                TextField("型号", text: $controllerLabel)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 150)
+            }
+            HStack {
+                Text("车型")
+                Spacer()
+                TextField("车型", text: $vehicleLabel)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 150)
+            }
+            LabeledContent("版本", value: "0.1.1")
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
-            LabeledContent("控制器", value: "E400Max-CAN")
-            LabeledContent("车型", value: "九号 E80c MK2")
+            LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
         } header: {
             Text("关于")
         }
