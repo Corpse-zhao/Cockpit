@@ -18,8 +18,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.corpsezhao.e400cockpit
-        MARKETING_VERSION: "0.4.4"
-        CURRENT_PROJECT_VERSION: "18"
+        MARKETING_VERSION: "0.4.5"
+        CURRENT_PROJECT_VERSION: "19"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_BITCODE: "NO"
@@ -28,8 +28,8 @@ targets:
       properties:
         CFBundleDisplayName: Cockpit
         CFBundleName: Cockpit
-        CFBundleShortVersionString: "0.4.4"
-        CFBundleVersion: "18"
+        CFBundleShortVersionString: "0.4.5"
+        CFBundleVersion: "19"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

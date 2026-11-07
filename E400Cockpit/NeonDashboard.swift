@@ -25,6 +25,31 @@ enum WallpaperStore {
         return UIImage(contentsOfFile: u.path)
     }
 
+    /// 壁纸填充方式：false = 铺满（裁成屏幕比例），true = 完整显示（模糊边填充）
+    static let fitKey = "wallpaper_fit"
+
+    /// 仪表页真正显示的图：完整模式用**未裁剪的原图**，铺满模式用裁剪结果。
+    /// 以前只有裁剪结果，一张 4:3 的照片要铺满 2.16:1 的横屏就得放大 62% 再裁掉上下，
+    /// 看着就像「图被放大了一截」。
+    static func displayImage(fit: Bool) -> UIImage? {
+        fit ? (sourceImage ?? image) : image
+    }
+
+    /// 完整模式：不裁剪，直接把原图登记成壁纸（只做一次降质重编码）
+    @discardableResult
+    static func useFullImage() -> Bool {
+        guard let src = sourceImage, let jpg = src.jpegData(compressionQuality: 0.92) else { return false }
+        let u = dir.appendingPathComponent(croppedName)
+        do {
+            try jpg.write(to: u, options: .atomic)
+            UserDefaults.standard.set(croppedName, forKey: key)
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "wallpaper_version")
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// 未经裁剪的原图
     static var sourceImage: UIImage? {
         let u = dir.appendingPathComponent(sourceName)
@@ -76,18 +101,37 @@ enum WallpaperStore {
 struct WallpaperBackground: View {
     @AppStorage("wallpaper_version") private var version = 0.0
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
+    @AppStorage("wallpaper_fit") private var fit = false
 
     private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                if let img = WallpaperStore.image {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
+                if let img = WallpaperStore.displayImage(fit: fit) {
+                    if fit {
+                        // 完整模式：同一张图先铺一层模糊打底，再把整张按比例塞进来。
+                        // 两边（或上下）的空档由模糊底填满，画面一点都不裁，也就不会被「放大」。
+                        ZStack {
+                            Image(uiImage: img)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .clipped()
+                                .blur(radius: 30)
+                                .opacity(0.92)
+                            Image(uiImage: img)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: geo.size.width, height: geo.size.height)
+                        }
+                    } else {
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .clipped()
+                    }
                     // 左侧压暗保证数据可读，右侧保留壁纸亮度
                     LinearGradient(
                         stops: [
@@ -271,7 +315,9 @@ struct NeonStatusPanel: View {
     @EnvironmentObject var central: CockpitCentral
     @EnvironmentObject var bms: BmsCentral
     @AppStorage("vehicle_label") private var vehicleLabel = ""
-    @AppStorage("show_motor_temp") private var showMotorTemp = true
+    /// 电机温度默认不开：没接电机温感的车这一格永远是 0.00 ℃。
+    /// 关着的时候这一格显示相电流。
+    @AppStorage("show_motor_temp") private var showMotorTemp = false
     @AppStorage("show_bms_strip") private var showBms = true
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
 
@@ -518,15 +564,17 @@ struct NeonStatusPanel: View {
                      color: tempColor(t?.controllerTemp))
         ]
 
-        // 第二排：转速 / 定位精度 / 电机温度（关了温感就换成里程）/ 故障码
-        let third: TileSpec = showMotorTemp
+        // 第二排：相电流（手动开了电机温度就换成电机温度）/ 转速 / 定位精度 / 故障码
+        let lead: TileSpec = showMotorTemp
             ? TileSpec(key: "电机温度", value: Fmt.temp(t?.motorTemp), color: tempColor(t?.motorTemp))
-            : TileSpec(key: "本次里程", value: String(format: "%.2f km", central.tripKm), color: .white)
+            : TileSpec(key: "相电流",
+                       value: t.map { Fmt.num($0.phaseCurrentInferred, "A") } ?? "——",
+                       color: .white)
 
         let second: [TileSpec] = [
+            lead,
             TileSpec(key: "转速", value: t.map { "\($0.rpm)" } ?? "——", color: .white),
             TileSpec(key: "定位精度", value: gpsText, color: gpsColor),
-            third,
             TileSpec(key: "故障码",
                      value: fault == 0 ? "状态良好" : String(format: "0x%04X", fault & 0xFFFF),
                      color: fault == 0 ? Color(red: 0.2, green: 0.95, blue: 0.55)

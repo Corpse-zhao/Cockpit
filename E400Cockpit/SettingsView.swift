@@ -33,7 +33,7 @@ struct SettingsView: View {
     @AppStorage("controller_label") private var controllerLabel = "未设置"
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("value_decimals") private var decimals = 2
-    @AppStorage("show_motor_temp") private var showMotorTemp = true
+    @AppStorage("show_motor_temp") private var showMotorTemp = false
     @AppStorage("show_bms_strip") private var showBms = true
     @AppStorage("bms_auto_reconnect") private var bmsAuto = true
     @AppStorage("bms_only_boards") private var bmsOnlyBoards = true
@@ -45,6 +45,8 @@ struct SettingsView: View {
     @State private var pickedWallpaper: PhotosPickerItem?
     @State private var hasWallpaper = WallpaperStore.url != nil
     @State private var cropSource: UIImage?
+    /// 壁纸填充方式：false 铺满（裁剪），true 完整显示（模糊边）
+    @AppStorage("wallpaper_fit") private var wallpaperFit = false
 
     // 主题
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
@@ -130,8 +132,14 @@ struct SettingsView: View {
                 if let data = try? await item.loadTransferable(type: Data.self),
                    WallpaperStore.saveSource(data),
                    let img = WallpaperStore.sourceImage {
-                    cropSource = ImageTools.normalized(img)
-                    activeSheet = .crop
+                    if wallpaperFit {
+                        // 完整模式根本不用裁：整张照片按比例塞进屏幕，两侧补模糊
+                        WallpaperStore.useFullImage()
+                        hasWallpaper = true
+                    } else {
+                        cropSource = ImageTools.normalized(img)
+                        activeSheet = .crop
+                    }
                 }
                 pickedWallpaper = nil
             }
@@ -169,14 +177,31 @@ struct SettingsView: View {
             PhotosPicker(selection: $pickedWallpaper, matching: .images, photoLibrary: .shared()) {
                 Label(hasWallpaper ? "更换壁纸" : "选择壁纸图片", systemImage: "photo.on.rectangle.angled")
             }
+
+            Picker("壁纸填充", selection: $wallpaperFit) {
+                Text("铺满屏幕（裁掉多余部分）").tag(false)
+                Text("完整显示（模糊边填充）").tag(true)
+            }
+            .onChange(of: wallpaperFit) { v in
+                guard hasWallpaper else { return }
+                if v {
+                    WallpaperStore.useFullImage()
+                } else if let img = WallpaperStore.sourceImage {
+                    cropSource = ImageTools.normalized(img)
+                    activeSheet = .crop
+                }
+            }
+
             if hasWallpaper {
-                Button {
-                    if let img = WallpaperStore.sourceImage {
-                        cropSource = ImageTools.normalized(img)
-                        activeSheet = .crop
+                if !wallpaperFit {
+                    Button {
+                        if let img = WallpaperStore.sourceImage {
+                            cropSource = ImageTools.normalized(img)
+                            activeSheet = .crop
+                        }
+                    } label: {
+                        Label("重新裁剪显示区域", systemImage: "crop")
                     }
-                } label: {
-                    Label("重新裁剪显示区域", systemImage: "crop")
                 }
                 Button(role: .destructive) {
                     WallpaperStore.clear()
@@ -195,7 +220,7 @@ struct SettingsView: View {
         } header: {
             Text("外观")
         } footer: {
-            Text("壁纸导入后可以拖动、双指缩放来挑显示区域，框内就是仪表页真正显示的范围，原始图会单独留存，随时能重新裁剪而不会越裁越糊。\n\n主题色只改强调色这一条主轴（进度弧、发光、关键数值、按钮），毛玻璃卡片和白色刻度保持不变。圆盘指针指示车速，满量程默认 140 km/h。")
+            Text("壁纸有两种填充方式：\n· 铺满屏幕——照片等比放大到盖满整块屏，多出来的部分裁掉（4:3 的照片会放大 6 成再切上下，画面看起来“被放大”就是这个原因）；\n· 完整显示——整张照片按比例缩到框内，左右（或上下）空档用同一张图的模糊版填满，一点不裁。\n\n铺满模式下导入后可以拖动、双指缩放挑显示区域，框内就是仪表页真正显示的范围；原始图单独留存，随时能重新裁剪而不会越裁越糊。主题色只改强调色这一条主轴（进度弧、发光、关键数值、按钮），毛玻璃卡片和白色刻度保持不变。圆盘指针指示车速，满量程默认 140 km/h。")
         }
     }
 
@@ -581,7 +606,7 @@ struct SettingsView: View {
         } header: {
             Text("传感器")
         } footer: {
-            Text("有些车型的电机没有内置温感，协议里这个字段会恒为 0——关掉后仪表页不再显示该格，网格自动重排，也不会留一格永远 0.00 ℃ 的摆设数据。控制器温度始终显示。")
+            Text("默认关。关着时仪表第二排第一格显示「相电流」；打开后这一格换成「电机温度」。有些车型的电机没内置温感，协议里这个字段会恒为 0——这种车别开，否则那一格永远是 0.00 ℃。控制器温度始终显示。")
         }
     }
 
