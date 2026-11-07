@@ -128,6 +128,13 @@ final class CockpitCentral: NSObject, ObservableObject {
     @objc private func tick() {
         guard let p = peripheral, let w = writeChar else { return }
         driver.applyLayoutFromDefaults()
+        // 长帧请求是为了逼出带转把/挡位的完整帧；控制器不认这个 LEN 就会一直不回应，
+        // 3 秒没有有效实时帧就自动退回标准帧，避免把仪表搞成一片「——」。
+        if UserDefaults.standard.bool(forKey: "long_realtime_request"),
+           Date().timeIntervalSince(lastTelemetryDate) > 3.0 {
+            driver.disableLongRequest()
+            log("长帧请求 3 秒无有效回应，已自动回退标准实时帧")
+        }
         let cmd = driver.nextRequestFrame()
         p.writeValue(Data(cmd), for: w, type: .withoutResponse)
     }

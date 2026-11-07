@@ -42,6 +42,7 @@ struct SettingsView: View {
     @AppStorage("throttle_offset") private var throttleOffset = -1
     @AppStorage("gear_offset") private var gearOffset = -1
     @AppStorage("gear_short_fallback") private var gearShortFallback = false
+    @AppStorage("long_realtime_request") private var longRealtime = false
 
     @State private var showAdvanced = false
     @State private var showFieldOffsets = false
@@ -507,6 +508,12 @@ struct SettingsView: View {
             }
 
             DisclosureGroup("手动调整字段偏移", isExpanded: $showFieldOffsets) {
+                Toggle("向控制器要「长帧」（AA 55 1A 22 3B）", isOn: $longRealtime)
+                    .font(.subheadline)
+                Text("默认请求是把 LEN 压到 0x02，你的控制器只回 23 字节的精简帧，转把和挡位就被裁掉了。打开这个开关改成要 29 字节那份完整帧——官方 App 既然能显示转把，控制器里多半是有的。若控制器不认这个请求，3 秒内没有实时数据会自动退回，不会把仪表弄哑。")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
                 offsetStepper("转把电压偏移", value: $throttleOffset, autoLabel: "自动 @22")
                 offsetStepper("挡位偏移", value: $gearOffset, autoLabel: "自动 @27")
 
@@ -521,6 +528,7 @@ struct SettingsView: View {
                     throttleOffset = -1
                     gearOffset = -1
                     gearShortFallback = false
+                    longRealtime = false
                 }
                 .font(.caption)
             }
@@ -621,7 +629,7 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本", value: "0.2.2")
+            LabeledContent("版本", value: "0.2.3")
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
             LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
             LabeledContent("屏幕方向", value: "横屏")

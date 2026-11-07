@@ -8,6 +8,11 @@ enum Lingbo {
     static let calibrationRequest: [UInt8] = [0xAA, 0x55, 0x02, 0x20, 0x21]
     /// 读实时数据
     static let realtimeRequest: [UInt8] = [0xAA, 0x55, 0x02, 0x22, 0x23]
+    /// 读实时数据——「长帧」变体：把 LEN 从 0x02 抬到 0x1A，
+    /// 等价于告诉控制器「我要 29 字节那份完整数据」。
+    /// 部分固件会据此返回带转把 / 挡位的长帧，部分固件直接不理——
+    /// 所以它是个可开关的实验项，3 秒收不到实时帧就自动回退。
+    static let realtimeRequestLong: [UInt8] = [0xAA, 0x55, 0x1A, 0x22, 0x3B]
 }
 
 final class LingboParser {
@@ -68,6 +73,8 @@ final class LingboParser {
     /// 最近一次解析用了哪些偏移
     private(set) var trace = FieldTrace()
     var layout = Layout()
+    /// 实时请求是否用「长帧」变体（实验项，见 Lingbo.realtimeRequestLong）
+    private(set) var useLongRequest = false
 
     private var stream: [UInt8] = []
     private static let capacity = 512
@@ -88,6 +95,13 @@ final class LingboParser {
         layout.throttleOffset = (t >= 0 && t <= 40) ? t : nil
         layout.gearOffset = (g >= 0 && g <= 40) ? g : nil
         layout.shortFrameGearFallback = d.bool(forKey: "gear_short_fallback")
+        useLongRequest = d.bool(forKey: "long_realtime_request")
+    }
+
+    /// 外部（自动回退逻辑）关掉长帧请求
+    func disableLongRequest() {
+        useLongRequest = false
+        UserDefaults.standard.set(false, forKey: "long_realtime_request")
     }
 
     /// 喂入 BLE 收到的字节块，返回本块中最后一帧有效实时数据（若有）

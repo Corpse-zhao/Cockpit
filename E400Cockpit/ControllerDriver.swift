@@ -28,6 +28,9 @@ protocol ControllerDriver: AnyObject {
     /// 从设置读取字段偏移覆盖（用户改了偏移要即时生效）
     func applyLayoutFromDefaults()
 
+    /// 关掉「长帧请求」实验开关（自动回退时用）
+    func disableLongRequest()
+
     /// 下一条要发出的请求帧。轮询器每 500ms 取一次。
     func nextRequestFrame() -> [UInt8]
 
@@ -51,7 +54,8 @@ extension LingboParser: ControllerDriver {
     var nameHint: String { "LBMC" }
 
     func nextRequestFrame() -> [UInt8] {
-        calibration.calibrated ? Lingbo.realtimeRequest : Lingbo.calibrationRequest
+        if !calibration.calibrated { return Lingbo.calibrationRequest }
+        return useLongRequest ? Lingbo.realtimeRequestLong : Lingbo.realtimeRequest
     }
 }
 
