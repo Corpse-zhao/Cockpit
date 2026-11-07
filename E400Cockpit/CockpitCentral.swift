@@ -33,6 +33,9 @@ final class CockpitCentral: NSObject, ObservableObject {
     @Published var tripKm: Double = 0
     @Published var console: [ConsoleLine] = []
     @Published var connectedName: String?
+    /// 当前生效的滚动周长（mm），供仪表页显示来源
+    @Published var wheelCircMM: Double = 1426
+    @Published var wheelCircSource: String = "估算"
 
     static let serviceUUID = CBUUID(string: "FFF0")
     static let notifyUUID = CBUUID(string: "FFF1")
@@ -107,13 +110,15 @@ final class CockpitCentral: NSObject, ObservableObject {
     // MARK: - 遥测发布
 
     private func publish(_ t: LingboParser.Telemetry) {
-        let circumf = UserDefaults.standard.object(forKey: "wheel_circ_mm") as? Double
-            ?? CockpitCentral.defaultWheelCircMM
+        // 周长来源优先级：实测覆盖 > 轮胎模型估算（含车重/人重/胎压/下沉量）
+        let circumf = TireModel.effectiveCircumferenceMM()
         let scale = UserDefaults.standard.object(forKey: "rpm_scale") as? Double ?? 1.0
         var v = Double(t.rpm) * scale * circumf * 60.0 / 1_000_000.0
         if v < 0 { v = 0 }
         if v > 160 { v = 160 }
         speedKmh = v
+        wheelCircMM = circumf
+        wheelCircSource = TireModel.circumferenceSourceText()
 
         let now = Date()
         let dt = now.timeIntervalSince(lastTelemetryDate)

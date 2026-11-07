@@ -139,6 +139,10 @@ struct GaugePanel: View {
             .font(.footnote.monospaced())
             .foregroundColor(.secondary)
             .padding(.top, 6)
+
+            Text(String(format: "周长 %.0f mm · %@", central.wheelCircMM, central.wheelCircSource))
+                .font(.caption2.monospaced())
+                .foregroundColor(.gray)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
