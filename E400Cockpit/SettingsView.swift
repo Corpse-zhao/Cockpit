@@ -346,6 +346,10 @@ struct SettingsView: View {
                 }
             }
 
+            if let g = bms.gattInfo {
+                LabeledContent("通道", value: g)
+            }
+
             if let t = bms.telemetry {
                 Button {
                     activeSheet = .bmsDetail

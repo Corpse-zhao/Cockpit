@@ -18,210 +18,424 @@ struct DashboardView: View {
 
 // MARK: - 扫描页（横屏）
 
-/// 不绑定任何具体型号：标题读 App 名，扫描按钮和过滤徽标都是通用文案，
-/// 过滤器只是在「全部蓝牙设备」和「按已知前缀过滤」之间切，不再是「仅凌博」。
+/// 左边是入口，右边分两栏：控制器（AA55 系）和电池（蚂蚁板 BMS）。
+/// 两条 BLE 链路各扫各的，互不干扰，哪个先连上都行。
 struct ScanView: View {
     @EnvironmentObject var central: CockpitCentral
+    @EnvironmentObject var bms: BmsCentral
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("scan_all_devices") private var scanAllDevices = false
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
 
     private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
+    private var green: Color { Color(red: 0.2, green: 0.95, blue: 0.55) }
 
     var body: some View {
-        HStack(spacing: 24) {
+        HStack(alignment: .top, spacing: 14) {
             hero
-                .frame(width: 300)
+                .frame(width: 200)
 
-            devicePanel
+            controllerColumn
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            bmsColumn
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
-    // MARK: 左侧
+    // MARK: 左：入口
 
     private var hero: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 9) {
             Spacer(minLength: 0)
 
             ZStack {
                 Circle()
                     .fill(theme.accent.opacity(0.20))
-                    .frame(width: 96, height: 96)
-                    .blur(radius: 22)
+                    .frame(width: 74, height: 74)
+                    .blur(radius: 20)
                 Image(systemName: "speedometer")
-                    .font(.system(size: 46, weight: .light))
+                    .font(.system(size: 34, weight: .light))
                     .foregroundColor(theme.accentLight)
             }
 
             Text(AppInfo.name)
-                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .font(.system(size: 21, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
             Text(vehicleLabel.isEmpty ? "未设置车型" : vehicleLabel)
-                .font(.footnote)
-                .foregroundColor(.white.opacity(0.5))
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.45))
                 .lineLimit(1)
 
-            Button {
-                central.startScan()
-            } label: {
-                HStack(spacing: 7) {
-                    if central.phase == .scanning {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "dot.radiowaves.left.and.right")
+            VStack(spacing: 7) {
+                // 控制器
+                Button {
+                    central.startScan()
+                } label: {
+                    HStack(spacing: 6) {
+                        if central.phase == .scanning {
+                            ProgressView().scaleEffect(0.6).tint(.white)
+                        } else {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                        }
+                        Text(central.phase == .scanning ? "扫描中…" : "扫描控制器")
+                            .font(.system(size: 13, weight: .semibold))
                     }
-                    Text(scanTitle)
-                        .font(.system(size: 16, weight: .semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
-                .background(
-                    Capsule().fill(
-                        LinearGradient(colors: theme.gradientColors,
-                                       startPoint: .leading, endPoint: .trailing)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule().fill(
+                            LinearGradient(colors: theme.gradientColors,
+                                           startPoint: .leading, endPoint: .trailing)
+                        )
                     )
-                )
-                .foregroundColor(.white)
-                .shadow(color: theme.accent.opacity(0.45), radius: 12, y: 4)
-            }
-            .buttonStyle(.plain)
-            .disabled(central.phase == .scanning)
-            .padding(.top, 4)
-
-            if central.phase == .connecting {
-                HStack(spacing: 6) {
-                    ProgressView().scaleEffect(0.7)
-                    Text("正在连接…")
-                        .font(.caption)
+                    .foregroundColor(.white)
+                    .shadow(color: theme.accent.opacity(0.40), radius: 9, y: 3)
                 }
-                .foregroundColor(.orange)
-            }
+                .buttonStyle(.plain)
+                .disabled(central.phase == .scanning)
 
-            Text("支持凌博 / 远驱 / Sabvoton / Kelly 等 AA55 系控制器；其他品牌会自动探测通道")
-                .font(.system(size: 9))
-                .foregroundColor(.white.opacity(0.35))
+                // 电池
+                Button {
+                    bms.startScan()
+                } label: {
+                    HStack(spacing: 6) {
+                        if bms.phase == .scanning {
+                            ProgressView().scaleEffect(0.6).tint(green)
+                        } else {
+                            Image(systemName: "battery.100.bolt")
+                        }
+                        Text(bms.phase == .scanning ? "搜索中…" : "搜索电池 BMS")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(green.opacity(0.12)))
+                    .overlay(Capsule().stroke(green.opacity(0.45), lineWidth: 1))
+                    .foregroundColor(green)
+                }
+                .buttonStyle(.plain)
+                .disabled(bms.phase == .scanning)
+            }
+            .padding(.top, 3)
+
+            Text("控制器 AA55 · 电池 7EA1\n两条链路互不影响")
+                .font(.system(size: 8.5))
+                .foregroundColor(.white.opacity(0.32))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
-                .padding(.horizontal, 8)
 
             Spacer(minLength: 0)
         }
     }
 
-    private var scanTitle: String {
-        if central.phase == .scanning { return "扫描中…" }
-        return scanAllDevices ? "扫描全部蓝牙设备" : "扫描控制器"
+    // MARK: 中：控制器
+
+    private var visibleControllers: [CockpitCentral.DiscoveredDevice] {
+        scanAllDevices ? central.devices : central.devices.filter { $0.isKnown }
     }
 
-    // MARK: 右侧
-
-    private var devicePanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("附近的设备")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                Text("\(central.devices.count)")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.45))
-
-                Spacer()
-
-                // 过滤器直接点，不用回设置页翻
+    private var controllerColumn: some View {
+        column(
+            title: "控制器",
+            count: visibleControllers.count,
+            accent: theme.accentLight,
+            tint: theme.accent.opacity(0.18),
+            note: central.phase == .connecting ? "连接中…" : nil,
+            noteColor: .orange,
+            trailing: {
                 Button {
                     scanAllDevices.toggle()
                     if central.phase == .scanning { central.startScan() }
                 } label: {
-                    Text(scanAllDevices ? "全部蓝牙设备" : "仅已知控制器")
-                        .font(.system(size: 10))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule().fill(scanAllDevices
-                                           ? Color.white.opacity(0.10)
-                                           : theme.accent.opacity(0.20))
-                        )
+                    Text(scanAllDevices ? "全部蓝牙" : "仅已知")
+                        .font(.system(size: 9))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(scanAllDevices
+                                                   ? Color.white.opacity(0.10)
+                                                   : theme.accent.opacity(0.20)))
                         .foregroundColor(scanAllDevices ? .white.opacity(0.7) : theme.accentLight)
                 }
                 .buttonStyle(.plain)
             }
-
-            if central.devices.isEmpty {
-                emptyState
+        ) {
+            if visibleControllers.isEmpty {
+                if scanAllDevices {
+                    emptyHint(icon: "antenna.radiowaves.left.and.right.slash",
+                              text: "附近没有蓝牙设备\n确认控制器已上电，且没被官方 App 占用",
+                              action: nil)
+                } else {
+                    emptyHint(icon: "line.3.horizontal.decrease.circle",
+                              text: "没有发现已知控制器\n有些固件的广播名不带前缀",
+                              action: ("显示全部蓝牙", {
+                                  scanAllDevices = true
+                                  central.startScan()
+                              }))
+                }
             } else {
-                List(central.devices) { d in
-                    Button {
-                        central.connect(d)
-                    } label: {
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(d.name)
-                                        .font(.system(.body, design: .monospaced).bold())
-                                        .foregroundColor(.white)
-                                    if d.isKnown {
-                                        Text(ControllerIdentifier.brandName(for: d.name) ?? "已识别")
-                                            .font(.system(size: 9))
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 1)
-                                            .background(Capsule().fill(theme.accent.opacity(0.25)))
-                                            .foregroundColor(theme.accentLight)
-                                    }
-                                }
-                                Text("信号 \(d.rssi) dBm")
-                                    .font(.caption)
-                                    .foregroundColor(.white.opacity(0.4))
+                ScrollView {
+                    LazyVStack(spacing: 5) {
+                        ForEach(visibleControllers) { d in
+                            Button {
+                                central.connect(d)
+                            } label: {
+                                deviceRow(name: d.name,
+                                          badge: d.isKnown
+                                            ? (ControllerIdentifier.brandName(for: d.name) ?? "已识别")
+                                            : nil,
+                                          badgeColor: theme.accentLight,
+                                          rssi: d.rssi)
                             }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.3))
+                            .buttonStyle(.plain)
                         }
                     }
-                    .listRowBackground(Color.black)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
             }
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Spacer()
-            Image(systemName: scanAllDevices ? "antenna.radiowaves.left.and.right.slash" : "line.3.horizontal.decrease.circle")
-                .font(.system(size: 26))
-                .foregroundColor(.white.opacity(0.25))
-            Text(emptyTitle)
-                .font(.footnote)
-                .foregroundColor(.white.opacity(0.45))
-                .multilineTextAlignment(.center)
-            if !scanAllDevices {
-                Button("换成显示全部蓝牙设备") {
-                    scanAllDevices = true
-                    central.startScan()
+    // MARK: 右：电池 BMS
+
+    private var bmsColumn: some View {
+        column(
+            title: "电池 BMS",
+            count: bms.devices.count,
+            accent: green,
+            tint: green.opacity(0.16),
+            note: bmsNote,
+            noteColor: bms.phase == .online ? green : .orange,
+            trailing: {
+                Button {
+                    bms.startScan()
+                } label: {
+                    Text(bms.phase == .scanning ? "搜索中" : "搜索")
+                        .font(.system(size: 9))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(green.opacity(0.18)))
+                        .foregroundColor(green)
                 }
-                .font(.caption)
-                .foregroundColor(theme.accentLight)
+                .buttonStyle(.plain)
             }
-            Spacer()
+        ) {
+            VStack(spacing: 0) {
+                if let t = bms.telemetry {
+                    connectedBmsCard(t)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 5)
+                }
+
+                if bms.devices.isEmpty {
+                    if bms.phase == .scanning {
+                        emptyHint(icon: "battery.0", text: "正在搜索电池…", action: nil)
+                    } else {
+                        emptyHint(icon: "battery.0",
+                                  text: "点左边「搜索电池 BMS」\n蚂蚁板广播名一般以 ANT 开头",
+                                  action: ("开始搜索", { bms.startScan() }))
+                    }
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 5) {
+                            ForEach(bms.devices) { d in
+                                Button {
+                                    bms.connect(d)
+                                } label: {
+                                    deviceRow(name: d.name,
+                                              badge: d.likely ? "疑似 BMS" : nil,
+                                              badgeColor: green,
+                                              rssi: d.rssi,
+                                              highlighted: bms.phase == .connecting)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                    }
+                }
+
+                if let err = bms.lastError {
+                    HStack(alignment: .top, spacing: 5) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 8))
+                        Text(err)
+                            .font(.system(size: 8.5))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+                }
+            }
+        }
+    }
+
+    private var bmsNote: String? {
+        if bms.phase == .online {
+            return bms.telemetry.map { "\($0.soc)% · \($0.cellCount)S" } ?? "已连接"
+        }
+        if bms.phase == .connecting { return "连接中…" }
+        if bms.phase == .scanning { return "搜索中" }
+        return nil
+    }
+
+    private func connectedBmsCard(_ t: AntBmsParser.Telemetry) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "battery.100.bolt")
+                .font(.system(size: 12))
+                .foregroundColor(green)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(bms.connectedName ?? "电池")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Text(String(format: "%.2f V · %+.2f A · %dS",
+                            t.packVoltage, t.current, t.cellCount))
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.5))
+            }
+            Spacer(minLength: 0)
+            Button {
+                bms.disconnect()
+            } label: {
+                Text("断开")
+                    .font(.system(size: 9))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 9).fill(green.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(green.opacity(0.30), lineWidth: 0.8))
+    }
+
+    // MARK: 通用栏
+
+    private func column<C: View, T: View>(title: String,
+                                          count: Int,
+                                          accent: Color,
+                                          tint: Color,
+                                          note: String?,
+                                          noteColor: Color,
+                                          @ViewBuilder trailing: () -> T,
+                                          @ViewBuilder content: () -> C) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(accent)
+                    .frame(width: 3, height: 11)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                Text("\(count)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.40))
+                if let note {
+                    Text(note)
+                        .font(.system(size: 9))
+                        .foregroundColor(noteColor)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                trailing()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+
+            Rectangle()
+                .fill(Color.white.opacity(0.07))
+                .frame(height: 0.6)
+
+            content()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.045))
+                .overlay(RoundedRectangle(cornerRadius: 12)
+                    .stroke(tint, lineWidth: 0.8))
+        )
     }
 
-    private var emptyTitle: String {
-        if central.phase == .scanning {
-            return scanAllDevices ? "正在搜索附近的蓝牙设备…" : "正在搜索已知控制器…"
+    private func deviceRow(name: String,
+                           badge: String?,
+                           badgeColor: Color,
+                           rssi: Int,
+                           highlighted: Bool = false) -> some View {
+        HStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 8))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 0.5)
+                            .background(Capsule().fill(badgeColor.opacity(0.20)))
+                            .foregroundColor(badgeColor)
+                    }
+                    Text("\(rssi) dBm")
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundColor(rssiColor(rssi))
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.white.opacity(0.28))
         }
-        if scanAllDevices { return "附近没有发现蓝牙设备\n确认控制器已上电，且没有被官方 App 占用" }
-        return "没有发现已知控制器\n有些固件的广播名不带前缀，换个过滤器试试"
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(highlighted ? Color.white.opacity(0.09) : Color.white.opacity(0.05))
+        )
+    }
+
+    private func rssiColor(_ rssi: Int) -> Color {
+        if rssi >= -70 { return Color(red: 0.2, green: 0.95, blue: 0.55) }
+        if rssi >= -85 { return .white.opacity(0.45) }
+        return .orange
+    }
+
+    private func emptyHint(icon: String,
+                           text: String,
+                           action: (String, () -> Void)?) -> some View {
+        VStack(spacing: 7) {
+            Spacer(minLength: 0)
+            Image(systemName: icon)
+                .font(.system(size: 20))
+                .foregroundColor(.white.opacity(0.22))
+            Text(text)
+                .font(.system(size: 9.5))
+                .foregroundColor(.white.opacity(0.40))
+                .multilineTextAlignment(.center)
+                .lineSpacing(1.5)
+            if let action {
+                Button(action.0) { action.1() }
+                    .font(.system(size: 9.5))
+                    .foregroundColor(theme.accentLight)
+                    .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 10)
     }
 }

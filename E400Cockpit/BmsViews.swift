@@ -17,6 +17,12 @@ struct BmsFrameCard: View {
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundColor(frame.isEmpty ? .gray : .green)
                 Spacer()
+                if let g = bms.gattInfo {
+                    Text(g)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.45))
+                        .lineLimit(1)
+                }
                 Text(bms.phase.rawValue)
                     .font(.system(size: 10))
                     .foregroundColor(bms.phase == .online ? .green : .orange)
