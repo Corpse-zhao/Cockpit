@@ -36,6 +36,7 @@ struct SettingsView: View {
     @AppStorage("show_motor_temp") private var showMotorTemp = true
     @AppStorage("show_bms_strip") private var showBms = true
     @AppStorage("bms_auto_reconnect") private var bmsAuto = true
+    @AppStorage("bms_only_boards") private var bmsOnlyBoards = true
 
     @AppStorage("gauge_max_speed") private var maxSpeed = 140.0
     @AppStorage("boot_animation") private var bootAnimation = true
@@ -384,7 +385,7 @@ struct SettingsView: View {
 
             if bms.phase == .scanning {
                 Button("停止扫描") { bms.stopScan() }
-            } else if bms.phase == .online || bms.phase == .connecting {
+            } else if bms.phase == .online || bms.phase == .connected || bms.phase == .connecting {
                 Button("断开电池") { bms.disconnect() }
             } else {
                 Button {
@@ -408,7 +409,9 @@ struct SettingsView: View {
             }
 
             if !bms.devices.isEmpty {
-                ForEach(bms.devices) { d in
+                Toggle("只显示保护板品牌（蚂蚁/极空/嘉佰达/彦阳…）", isOn: $bmsOnlyBoards)
+                    .font(.subheadline)
+                ForEach(bmsOnlyBoards ? bms.devices.filter { $0.likely } : bms.devices) { d in
                     Button {
                         bms.connect(d)
                     } label: {
@@ -419,7 +422,7 @@ struct SettingsView: View {
                             Text(d.name)
                                 .lineLimit(1)
                             if d.likely {
-                                Text("疑似 BMS")
+                                Text(d.brand ?? "疑似 BMS")
                                     .font(.caption2)
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 1)
@@ -453,7 +456,7 @@ struct SettingsView: View {
 
     private var bmsColor: Color {
         switch bms.phase {
-        case .online: return .green
+        case .online, .connected: return .green
         case .connecting: return .yellow
         case .scanning: return .orange
         case .idle: return .secondary

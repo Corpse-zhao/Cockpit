@@ -756,7 +756,7 @@ struct NeonDashboard: View {
         .onAppear {
             withAnimation(.easeOut(duration: 0.28)) { appear = true }
             handlePhase(central.phase)
-            bms.autoReconnectIfNeeded()
+            bms.beginAutoConnect()
         }
         .onChange(of: central.phase) { newPhase in
             handlePhase(newPhase)

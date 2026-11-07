@@ -1,10 +1,47 @@
 import Foundation
 import CoreBluetooth
 
-/// 电池 BMS（蚂蚁板）蓝牙通道
-///
+// MARK: - 保护板品牌
+
+/// 只把「保护板」放进电池列表：蚂蚁 / 极空 / 嘉佰达 / 彦阳 / 达锂…
+/// 否则扫出来一堆耳机、车机、手表，翻半天找不到板子。
+enum BmsBrand {
+
+    struct Rule {
+        let label: String
+        /// 大小写不敏感的广播名前缀
+        let prefixes: [String]
+        /// 名字中间包含就算
+        let contains: [String]
+    }
+
+    static let rules: [Rule] = [
+        Rule(label: "蚂蚁", prefixes: ["ANT"], contains: ["ANTBMS", "ANT-BMS"]),
+        Rule(label: "极空", prefixes: ["JK", "JIKONG"], contains: ["JIKONG", "JK-BMS", "JK-B"]),
+        Rule(label: "嘉佰达", prefixes: ["JBD", "JIABAIDA"], contains: ["JIABAIDA"]),
+        Rule(label: "彦阳", prefixes: ["YY", "YANYANG"], contains: ["YANYANG"]),
+        Rule(label: "达锂", prefixes: ["DALY", "DL-"], contains: ["DALY"]),
+        Rule(label: "力恒", prefixes: ["LIANHE", "LITH"], contains: ["LIANHE"]),
+        Rule(label: "通用板", prefixes: ["BMS", "LLT", "SMARTBMS"], contains: [])
+    ]
+
+    /// 命中就返回品牌中文名，没命中返回 nil
+    static func match(_ name: String) -> String? {
+        let u = name.uppercased()
+        for r in rules {
+            if r.prefixes.contains(where: { u.hasPrefix($0) }) { return r.label }
+            if r.contains.contains(where: { u.contains($0) }) { return r.label }
+        }
+        return nil
+    }
+
+    static func isBoard(_ name: String) -> Bool { match(name) != nil }
+}
+
+// MARK: - 电池 BMS（保护板）蓝牙通道
+
 /// 和控制器是两条完全独立的 BLE 链路：控制器走 FFF0/FFF1/FFF2 读 AA55 帧，
-/// 电池走 FFE0/FFE1/FFE2 读 7EA1 帧。所以这里单独一个 CBCentralManager，
+/// 保护板走 FFE0 读 7EA1 帧。所以这里单独一个 CBCentralManager，
 /// 断了也不影响仪表主链路。
 final class BmsCentral: NSObject, ObservableObject {
 
@@ -12,6 +49,8 @@ final class BmsCentral: NSObject, ObservableObject {
         case idle = "未连接"
         case scanning = "扫描中"
         case connecting = "连接中"
+        /// BLE 建链成功、特征值已拿到，但还没解析出第一帧
+        case connected = "已连接"
         case online = "在线"
     }
 
@@ -19,8 +58,10 @@ final class BmsCentral: NSObject, ObservableObject {
         let id: UUID
         let name: String
         var rssi: Int
-        /// 名字或广播里像 BMS 的（排前面）
+        /// 名字或广播里像保护板的
         var likely: Bool
+        /// 命中的品牌（蚂蚁 / 极空 / …）
+        var brand: String?
     }
 
     @Published var phase: Phase = .idle
@@ -31,6 +72,9 @@ final class BmsCentral: NSObject, ObservableObject {
     @Published var lastError: String?
     /// 最近一帧原始字节（数据台用）
     @Published var lastFrame: [UInt8] = []
+    /// 最近收到的原始通知字节（不管能不能解析都记下来）——不通时全靠它定位
+    @Published var lastRX = ""
+    @Published var rxTotal = 0
     /// 实际选中的服务/特征值，排查连不上、没数据时第一眼看这个
     @Published var gattInfo: String?
 
@@ -45,22 +89,31 @@ final class BmsCentral: NSObject, ObservableObject {
     ]
     /// 记住上次连过的设备，下次一键重连
     static let lastDeviceKey = "bms_last_device"
+    static let lastNameKey = "bms_last_name"
 
     private var manager: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var notifyChar: CBCharacteristic?
     private var writeChar: CBCharacteristic?
+    /// 所有能通知的特征值（一次全订阅，回应落在哪个通道都能收到）
+    private var notifyCandidates: [CBCharacteristic] = []
+    /// 所有能写的特征值（按可疑程度排序），收不到数据就挨个试
+    private var writeCandidates: [CBCharacteristic] = []
+    private var probeIndex = 0
+    private var probeTimer: Timer?
     private var pollTimer: Timer?
     private let parser = AntBmsParser()
     private var started = false
     /// 扫描时拿到的外设引用：retrievePeripherals 有时拿不到刚发现的设备，自己留一份最稳
     private var found: [UUID: CBPeripheral] = [:]
-    /// 是否已经拿到过第一帧（用来区分「连上了但没数据」和「真在线」）
+    /// 是否已经拿到过第一帧
     private var gotFrame = false
     /// 连接失败后还剩几次自动重试
     private var pendingRetries = 0
     /// 这次连的设备信号强度，用来给超时提示加料
     private var connectRSSI = 0
+    /// 启动时自动连：扫到名字跟上次一样的板子就直接连
+    private var autoConnectArmed = false
 
     var isUsable: Bool { phase == .online }
 
@@ -82,6 +135,7 @@ final class BmsCentral: NSObject, ObservableObject {
     }
 
     func connect(_ device: Device) {
+        autoConnectArmed = false
         manager?.stopScan()
         let p = found[device.id]
             ?? manager?.retrievePeripherals(withIdentifiers: [device.id]).first
@@ -89,6 +143,7 @@ final class BmsCentral: NSObject, ObservableObject {
             lastError = "设备已不可用，请重新扫描"
             return
         }
+        UserDefaults.standard.set(device.name, forKey: BmsCentral.lastNameKey)
         beginConnect(p, retries: 3, rssi: device.rssi)
     }
 
@@ -101,11 +156,38 @@ final class BmsCentral: NSObject, ObservableObject {
         }
         guard let p = found[uuid]
                 ?? manager?.retrievePeripherals(withIdentifiers: [uuid]).first else {
-            lastError = "找不到上次那块电池，请重新扫描"
+            lastError = "找不到上次那块电池，正在重新搜索…"
+            autoConnectArmed = true
+            startScan()
             return
         }
         let rssi = devices.first { $0.id == uuid }?.rssi ?? 0
         beginConnect(p, retries: 3, rssi: rssi)
+    }
+
+    /// 启动 / 跳到仪表页时调用：能直连就直连，不能就静默扫一轮，
+    /// 扫到名字跟上次一样的板子自动连上——不用人再跑去设置里点。
+    func beginAutoConnect() {
+        guard phase == .idle || phase == .scanning else { return }
+        let auto = UserDefaults.standard.object(forKey: "bms_auto_reconnect") as? Bool ?? true
+        guard auto else { return }
+
+        let lastName = UserDefaults.standard.string(forKey: BmsCentral.lastNameKey)
+        if let raw = UserDefaults.standard.string(forKey: BmsCentral.lastDeviceKey),
+           let uuid = UUID(uuidString: raw) {
+            if manager == nil { manager = CBCentralManager(delegate: self, queue: nil) }
+            if let p = found[uuid] ?? manager?.retrievePeripherals(withIdentifiers: [uuid]).first {
+                beginConnect(p, retries: 3, rssi: devices.first { $0.id == uuid }?.rssi ?? 0)
+                return
+            }
+        }
+        guard lastName != nil else { return }
+        autoConnectArmed = true
+        if phase != .scanning { startScan() }
+        // 15 秒还没扫到就收手，别一直占着扫描
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            self?.autoConnectArmed = false
+        }
     }
 
     /// 统一入口：连不上会自动重试，iOS 的 BLE 建链超时是常态
@@ -117,6 +199,8 @@ final class BmsCentral: NSObject, ObservableObject {
         gotFrame = false
         started = false
         gattInfo = nil
+        lastRX = ""
+        rxTotal = 0
         peripheral = p
         p.delegate = self
         manager?.connect(p, options: BmsCentral.connectOptions)
@@ -134,7 +218,7 @@ final class BmsCentral: NSObject, ObservableObject {
             if connectRSSI != 0 && connectRSSI < -85 {
                 return "连接超时：信号太弱（\(connectRSSI) dBm），走近电池再试"
             }
-            return "连接超时：走近电池、确认没被蚂蚁板 App 或别的手机占着，再试一次"
+            return "连接超时：走近电池、确认没被官方 App 或别的手机占着，再试一次"
         case .peripheralDisconnected:
             return "连接被断开，可能同时被别的 App 连了"
         case .connectionFailed:
@@ -146,16 +230,6 @@ final class BmsCentral: NSObject, ObservableObject {
         }
     }
 
-    /// 启动时自动重连（设置里可关）。没有记录过设备就什么都不做。
-    func autoReconnectIfNeeded() {
-        guard phase == .idle || phase == .scanning else { return }
-        let auto = UserDefaults.standard.object(forKey: "bms_auto_reconnect") as? Bool ?? true
-        guard auto else { return }
-        guard let raw = UserDefaults.standard.string(forKey: BmsCentral.lastDeviceKey),
-              UUID(uuidString: raw) != nil else { return }
-        reconnectLast()
-    }
-
     var hasLastDevice: Bool {
         guard let raw = UserDefaults.standard.string(forKey: BmsCentral.lastDeviceKey) else { return false }
         return UUID(uuidString: raw) != nil
@@ -163,6 +237,7 @@ final class BmsCentral: NSObject, ObservableObject {
 
     func forgetLast() {
         UserDefaults.standard.removeObject(forKey: BmsCentral.lastDeviceKey)
+        UserDefaults.standard.removeObject(forKey: BmsCentral.lastNameKey)
         disconnect()
     }
 
@@ -174,18 +249,25 @@ final class BmsCentral: NSObject, ObservableObject {
     private func teardown() {
         pollTimer?.invalidate()
         pollTimer = nil
+        probeTimer?.invalidate()
+        probeTimer = nil
         started = false
         gotFrame = false
+        pendingRetries = 0
+        probeIndex = 0
+        notifyCandidates = []
+        writeCandidates = []
         parser.reset()
         notifyChar = nil
         writeChar = nil
         telemetry = nil
         connectedName = nil
         lastFrame = []
+        gattInfo = nil
         phase = .idle
     }
 
-    // MARK: 轮询
+    // MARK: 轮询 + 试通道
 
     private func beginPolling() {
         pollTimer?.invalidate()
@@ -196,11 +278,48 @@ final class BmsCentral: NSObject, ObservableObject {
     }
 
     @objc private func tick() {
-        guard let p = peripheral, let w = writeChar else { return }
+        guard let p = peripheral else { return }
+        guard !writeCandidates.isEmpty else { return }
+        let w = writeCandidates[min(probeIndex, writeCandidates.count - 1)]
+        writeChar = w
         // 有 withResponse 就用它：这些串口模块在 withoutResponse 下偶尔丢包
         let type: CBCharacteristicWriteType =
             w.properties.contains(.write) ? .withResponse : .withoutResponse
         p.writeValue(Data(AntBmsParser.statusRequest), for: w, type: type)
+    }
+
+    /// 2.5 秒还没回一帧就换下一个写特征值试试。
+    /// 保护板模块的分通道五花八门（Data / honeTX / screenTX / powerTX…），
+    /// 与其猜，不如一个个试过去，哪条回数据就记住哪条。
+    private func startProbeWatchdog() {
+        probeTimer?.invalidate()
+        guard writeCandidates.count > 1 else { return }
+        let t = Timer(timeInterval: 2.5, repeats: true) { [weak self] _ in
+            guard let self, self.started, !self.gotFrame else { return }
+            self.probeIndex = (self.probeIndex + 1) % self.writeCandidates.count
+            self.writeChar = self.writeCandidates[self.probeIndex]
+            self.updateGattInfo()
+            self.tick()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        probeTimer = t
+    }
+
+    private func updateGattInfo() {
+        guard let n = notifyChar, let w = writeChar else { return }
+        var s = "FFE0 / \(short(n.uuid)) 通知 → \(short(w.uuid)) 写入"
+        if writeCandidates.count > 1 {
+            s += " · 试 \(probeIndex + 1)/\(writeCandidates.count)"
+        }
+        gattInfo = s
+    }
+
+    private func short(_ u: CBUUID) -> String {
+        let s = u.uuidString
+        if s.count == 36, s.hasPrefix("0000"), s.hasSuffix("-0000-1000-8000-00805F9B34FB") {
+            return String(s.dropFirst(4).prefix(4))
+        }
+        return s
     }
 }
 
@@ -230,27 +349,37 @@ extension BmsCentral: CBCentralManagerDelegate {
         let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let name = peripheral.name ?? advName ?? "未知设备"
         let services = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
-        let upper = name.uppercased()
-        let likely = services.contains(BmsCentral.serviceUUID)
-            || upper.contains("ANT")
-            || upper.contains("BMS")
-            || upper.contains("JBD")
-            || upper.contains("DALY")
-            || upper.contains("JK")
-            || upper.contains("LLT")
+        let brand = BmsBrand.match(name)
+        let likely = brand != nil || services.contains(BmsCentral.serviceUUID)
 
         if let idx = devices.firstIndex(where: { $0.id == peripheral.identifier }) {
             devices[idx].rssi = RSSI.intValue
             devices[idx].likely = likely
+            devices[idx].brand = brand
         } else {
             found[peripheral.identifier] = peripheral
             devices.append(Device(id: peripheral.identifier, name: name,
-                                  rssi: RSSI.intValue, likely: likely))
+                                  rssi: RSSI.intValue, likely: likely, brand: brand))
         }
-        // 像 BMS 的排前面，同组内信号强的排前面
+        // 保护板排前面，同组内信号强的排前面
         devices.sort { a, b in
             if a.likely != b.likely { return a.likely }
             return a.rssi > b.rssi
+        }
+
+        // 启动自动重连：扫到跟上次同名的板子，直接连
+        if autoConnectArmed {
+            let lastName = UserDefaults.standard.string(forKey: BmsCentral.lastNameKey)?.uppercased()
+            let current = name.uppercased()
+            // 广播名可能被截断，两边互相前缀都算同一个
+            let same = lastName.map { current == $0 || current.hasPrefix($0) || $0.hasPrefix(current) } ?? false
+            if same {
+                autoConnectArmed = false
+                central.stopScan()
+                UserDefaults.standard.set(peripheral.identifier.uuidString,
+                                          forKey: BmsCentral.lastDeviceKey)
+                beginConnect(peripheral, retries: 3, rssi: RSSI.intValue)
+            }
         }
     }
 
@@ -258,7 +387,12 @@ extension BmsCentral: CBCentralManagerDelegate {
         connectedName = peripheral.name
         lastError = nil
         gotFrame = false
+        pendingRetries = 0
+        phase = .connected
         UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: BmsCentral.lastDeviceKey)
+        if let n = peripheral.name {
+            UserDefaults.standard.set(n, forKey: BmsCentral.lastNameKey)
+        }
         peripheral.delegate = self
         peripheral.discoverServices([BmsCentral.serviceUUID])
     }
@@ -281,9 +415,8 @@ extension BmsCentral: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        started = false
         teardown()
-        lastError = error?.localizedDescription ?? "连接已断开"
+        lastError = describe(error)
     }
 }
 
@@ -313,67 +446,95 @@ extension BmsCentral: CBPeripheralDelegate {
             c.properties.contains(.write) || c.properties.contains(.writeWithoutResponse)
         }
 
-        // 你的这块 ANT 板（ANT~BLE24EAUB）在 FFE0 下挂了 7 个特征值：
-        // Data / honeTX / honeRX / screenTX / screenRX / powerTX / powerRX，
-        // 只有 Data 是「通知+读+写」全能的——所以先找全能型，别死认 FFE1/FFE2。
-        if notifyChar == nil || writeChar == nil {
-            let combo = chars.filter { notifiable($0) && writable($0) }
-            if let c = combo.first(where: { $0.uuid == BmsCentral.notifyUUID }) ?? combo.first {
-                notifyChar = notifyChar ?? c
-                writeChar = writeChar ?? c
-            }
+        // 通知：全部订阅，回应落在哪个通道都能收到
+        let newNotify = chars.filter(notifiable)
+        for c in newNotify where !notifyCandidates.contains(where: { $0.uuid == c.uuid }) {
+            notifyCandidates.append(c)
         }
 
-        // 退路：标准 ANT 板 FFE1 通知 / FFE2 写
-        if notifyChar == nil {
-            notifyChar = chars.first { $0.uuid == BmsCentral.notifyUUID && notifiable($0) }
-                ?? chars.first(where: notifiable)
+        // 写入：按可疑程度排序
+        // 1) 「通知+写」全能型（多数保护板的 Data 通道，你这块板就是 FFE1）
+        // 2) 显式 FFE2
+        // 3) 只写不通知的（honeTX / screenTX / powerTX 这类）
+        // 4) 其余能写的
+        var ordered: [CBCharacteristic] = []
+        let combo = chars.filter { notifiable($0) && writable($0) }
+        if let c = combo.first(where: { $0.uuid == BmsCentral.notifyUUID }) ?? combo.first {
+            ordered.append(c)
         }
-        if writeChar == nil {
-            writeChar = chars.first { $0.uuid == BmsCentral.writeUUID && writable($0) }
-                ?? chars.first { writable($0) && !notifiable($0) }
-                ?? chars.first(where: writable)
+        if let c = chars.first(where: { $0.uuid == BmsCentral.writeUUID && writable($0) }),
+           !ordered.contains(where: { $0.uuid == c.uuid }) {
+            ordered.append(c)
+        }
+        for c in chars where writable(c) && !notifiable(c) {
+            if !ordered.contains(where: { $0.uuid == c.uuid }) { ordered.append(c) }
+        }
+        for c in chars where writable(c) {
+            if !ordered.contains(where: { $0.uuid == c.uuid }) { ordered.append(c) }
+        }
+        for c in ordered where !writeCandidates.contains(where: { $0.uuid == c.uuid }) {
+            writeCandidates.append(c)
         }
 
-        if let n = notifyChar, let w = writeChar {
-            gattInfo = "FFE0 / \(short(n.uuid)) 通知 → \(short(w.uuid)) 写入"
-            _ = n; _ = w
-        }
         startIfReady()
-    }
-
-    private func short(_ u: CBUUID) -> String {
-        let s = u.uuidString
-        // 16 位短 UUID 会补成 0000xxxx-0000-1000-8000-00805F9B34FB，只留中间四位
-        if s.count == 36, s.hasPrefix("0000"), s.hasSuffix("-0000-1000-8000-00805F9B34FB") {
-            return String(s.dropFirst(4).prefix(4))
+        // 特征值是分服务陆续报上来的，后面又发现新的可写通道就把试通道也开起来
+        if started, probeTimer == nil, !gotFrame, writeCandidates.count > 1 {
+            startProbeWatchdog()
+            updateGattInfo()
         }
-        return s
     }
 
     private func startIfReady() {
-        guard !started, let p = peripheral, let n = notifyChar, let w = writeChar else { return }
+        guard !started,
+              let p = peripheral,
+              let n = notifyCandidates.first,
+              !writeCandidates.isEmpty else { return }
         started = true
-        p.setNotifyValue(true, for: n)
-        _ = w
+        notifyChar = n
+        writeChar = writeCandidates[0]
+        probeIndex = 0
+        for c in notifyCandidates {
+            p.setNotifyValue(true, for: c)
+        }
+        updateGattInfo()
         beginPolling()
+        startProbeWatchdog()
 
-        // 5 秒还没回一帧，多半不是蚂蚁协议（或写特征选错了）——如实告诉用户
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+        // 8 秒还没回一帧，如实告诉用户
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
             guard let self, self.started, !self.gotFrame else { return }
-            self.lastError = "已连上但收不到数据，可能不是蚂蚁协议"
+            if self.rxTotal > 0 {
+                self.lastError = "收到 \(self.rxTotal) 字节但不认识：可能不是蚂蚁协议，去数据台看原始字节"
+            } else {
+                self.lastError = "已连上但 8 秒没收到任何数据：确认这块板支持蓝牙读取"
+            }
+        }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error {
+            lastError = "写入失败（\(short(characteristic.uuid))）：\(error.localizedDescription)"
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let data = characteristic.value, !data.isEmpty else { return }
-        if let t = parser.feed([UInt8](data)) {
+
+        // 不管能不能解析，先把收到的原始字节记下来——不通时全靠这个定位
+        let bytes = [UInt8](data)
+        rxTotal += bytes.count
+        lastRX = bytes.prefix(48).map { String(format: "%02X", $0) }.joined(separator: " ")
+
+        if let t = parser.feed(bytes) {
             gotFrame = true
+            probeTimer?.invalidate()
+            probeTimer = nil
             telemetry = t
             lastFrame = parser.lastFrame
             lastError = nil
             phase = .online
             frameCount += 1
+            updateGattInfo()
         }
     }
 }

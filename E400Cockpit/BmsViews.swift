@@ -29,9 +29,23 @@ struct BmsFrameCard: View {
             }
 
             if frame.isEmpty {
-                Text("未连接电池，或还没收到 7E A1 应答。蚂蚁板走 FFE0/FFE1/FFE2，1 秒要一次状态。")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
+                if bms.rxTotal > 0 {
+                    // 收到字节但没解析出帧——这块最有用，能直接看出板子回的到底是什么
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("收到 \(bms.rxTotal) 字节，但不是合法 7EA1 帧（或协议不同）")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.orange)
+                        Text(bms.lastRX)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.green)
+                            .textSelection(.enabled)
+                            .lineLimit(3)
+                    }
+                } else {
+                    Text("未连接电池，或还没收到 7E A1 应答。保护板走 FFE0，1 秒要一次状态。")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.5))
+                }
             } else {
                 Text(frame.map { String(format: "%02X", $0) }.joined(separator: " "))
                     .font(.system(size: 10, design: .monospaced))

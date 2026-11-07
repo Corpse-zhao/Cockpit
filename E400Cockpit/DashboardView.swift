@@ -25,6 +25,7 @@ struct ScanView: View {
     @EnvironmentObject var bms: BmsCentral
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("scan_all_devices") private var scanAllDevices = false
+    @AppStorage("bms_only_boards") private var bmsOnlyBoards = true
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
 
     private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
@@ -43,6 +44,7 @@ struct ScanView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .onAppear { bms.beginAutoConnect() }
     }
 
     // MARK: 左：入口
@@ -204,24 +206,32 @@ struct ScanView: View {
 
     // MARK: 右：电池 BMS
 
+    /// 只留保护板品牌的广播名（蚂蚁 / 极空 / 嘉佰达 / 彦阳 / 达锂…），
+    /// 不然耳机、车机、手表全冒出来，翻半天找不到板子。
+    private var visibleBms: [BmsCentral.Device] {
+        bmsOnlyBoards ? bms.devices.filter { $0.likely } : bms.devices
+    }
+
     private var bmsColumn: some View {
         column(
             title: "电池 BMS",
-            count: bms.devices.count,
+            count: visibleBms.count,
             accent: green,
             tint: green.opacity(0.16),
             note: bmsNote,
             noteColor: bms.phase == .online ? green : .orange,
             trailing: {
                 Button {
-                    bms.startScan()
+                    bmsOnlyBoards.toggle()
                 } label: {
-                    Text(bms.phase == .scanning ? "搜索中" : "搜索")
+                    Text(bmsOnlyBoards ? "仅保护板" : "全部蓝牙")
                         .font(.system(size: 9))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(green.opacity(0.18)))
-                        .foregroundColor(green)
+                        .background(Capsule().fill(bmsOnlyBoards
+                                                   ? green.opacity(0.18)
+                                                   : Color.white.opacity(0.10)))
+                        .foregroundColor(bmsOnlyBoards ? green : .white.opacity(0.7))
                 }
                 .buttonStyle(.plain)
             }
@@ -233,23 +243,27 @@ struct ScanView: View {
                         .padding(.top, 5)
                 }
 
-                if bms.devices.isEmpty {
+                if visibleBms.isEmpty {
                     if bms.phase == .scanning {
-                        emptyHint(icon: "battery.0", text: "正在搜索电池…", action: nil)
-                    } else {
+                        emptyHint(icon: "battery.0", text: "正在搜索保护板…", action: nil)
+                    } else if bms.devices.isEmpty {
                         emptyHint(icon: "battery.0",
-                                  text: "点左边「搜索电池 BMS」\n蚂蚁板广播名一般以 ANT 开头",
+                                  text: "点左边「搜索电池 BMS」\n蚂蚁 / 极空 / 嘉佰达 / 彦阳都会认",
                                   action: ("开始搜索", { bms.startScan() }))
+                    } else {
+                        emptyHint(icon: "line.3.horizontal.decrease.circle",
+                                  text: "搜到 \(bms.devices.count) 个蓝牙设备\n但没有保护板品牌的名字",
+                                  action: ("显示全部蓝牙", { bmsOnlyBoards = false }))
                     }
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 5) {
-                            ForEach(bms.devices) { d in
+                            ForEach(visibleBms) { d in
                                 Button {
                                     bms.connect(d)
                                 } label: {
                                     deviceRow(name: d.name,
-                                              badge: d.likely ? "疑似 BMS" : nil,
+                                              badge: d.brand ?? "疑似 BMS",
                                               badgeColor: green,
                                               rssi: d.rssi,
                                               highlighted: bms.phase == .connecting)
@@ -283,6 +297,7 @@ struct ScanView: View {
         if bms.phase == .online {
             return bms.telemetry.map { "\($0.soc)% · \($0.cellCount)S" } ?? "已连接"
         }
+        if bms.phase == .connected { return "等数据…" }
         if bms.phase == .connecting { return "连接中…" }
         if bms.phase == .scanning { return "搜索中" }
         return nil
