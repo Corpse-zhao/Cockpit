@@ -37,6 +37,7 @@ struct SettingsView: View {
     @AppStorage("show_bms_strip") private var showBms = true
     @AppStorage("bms_auto_reconnect") private var bmsAuto = true
     @AppStorage("bms_only_boards") private var bmsOnlyBoards = true
+    @AppStorage("bms_poll_ms") private var bmsPollMs = 400.0
 
     @AppStorage("gauge_max_speed") private var maxSpeed = 140.0
     @AppStorage("boot_animation") private var bootAnimation = true
@@ -114,6 +115,15 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity)
         .scrollContentBackground(.hidden)
         .background(Color.black.ignoresSafeArea())
+        // 横屏键盘占掉半屏，必须能收：滚一下立即收 + 键盘上一条「完成」
+        .scrollDismissesKeyboard(.immediately)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完成") { hideKeyboard() }
+                    .fontWeight(.semibold)
+            }
+        }
         .onChange(of: pickedWallpaper) { item in
             guard let item else { return }
             Task {
@@ -330,7 +340,18 @@ struct SettingsView: View {
     private var batterySection: some View {
         Section {
             Toggle("仪表页显示电池条", isOn: $showBms)
-            Toggle("启动时自动重连上次电池", isOn: $bmsAuto)
+            Toggle("自动重连（启动时 + 掉线后）", isOn: $bmsAuto)
+
+            Picker("刷新频率", selection: $bmsPollMs) {
+                Text("0.3 秒").tag(300.0)
+                Text("0.4 秒").tag(400.0)
+                Text("0.5 秒").tag(500.0)
+                Text("1 秒").tag(1000.0)
+                Text("2 秒").tag(2000.0)
+            }
+            Text("板子掉线频繁就调慢一点，数据看着卡就调快一点。带上响应（withResponse）时会自动等回音，不会把板子问崩。")
+                .font(.caption2)
+                .foregroundColor(.secondary)
 
             HStack(spacing: 6) {
                 Text("状态")
@@ -958,4 +979,13 @@ struct SettingsView: View {
             Text(unit).foregroundColor(.gray)
         }
     }
+}
+
+// MARK: - 收键盘
+
+/// 横屏下 Form 里的数字键盘没有「收起」动作，统一走这里。
+/// 点空白、下拉滚动、键盘上方的「完成」三条路都能收。
+func hideKeyboard() {
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                    to: nil, from: nil, for: nil)
 }

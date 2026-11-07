@@ -102,6 +102,15 @@ final class BmsCentral: NSObject, ObservableObject {
     private var probeIndex = 0
     private var probeTimer: Timer?
     private var pollTimer: Timer?
+    /// 带响应写出去后，等回音期间不再追写
+    private var awaitingReply = false
+    private var lastWriteAt = Date.distantPast
+    private var lastProbeAt = Date.distantPast
+    /// 断线自动重连
+    private var reconnectTimer: Timer?
+    private var reconnectAttempts = 0
+    /// 上一条数据的时间，用来判断「假在线」
+    @Published var lastFrameAt = Date.distantPast
     private let parser = AntBmsParser()
     private var started = false
     /// 扫描时拿到的外设引用：retrievePeripherals 有时拿不到刚发现的设备，自己留一份最稳
@@ -192,6 +201,7 @@ final class BmsCentral: NSObject, ObservableObject {
 
     /// 统一入口：连不上会自动重试，iOS 的 BLE 建链超时是常态
     private func beginConnect(_ p: CBPeripheral, retries: Int, rssi: Int) {
+        cancelReconnect()
         phase = .connecting
         if pendingRetries == 0 { lastError = nil }
         pendingRetries = retries
@@ -242,11 +252,12 @@ final class BmsCentral: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        cancelReconnect()
         if let p = peripheral { manager?.cancelPeripheralConnection(p) }
-        teardown()
+        teardown(clearData: true)
     }
 
-    private func teardown() {
+    private func teardown(clearData: Bool = true) {
         pollTimer?.invalidate()
         pollTimer = nil
         probeTimer?.invalidate()
@@ -255,60 +266,120 @@ final class BmsCentral: NSObject, ObservableObject {
         gotFrame = false
         pendingRetries = 0
         probeIndex = 0
+        awaitingReply = false
         notifyCandidates = []
         writeCandidates = []
         parser.reset()
         notifyChar = nil
         writeChar = nil
-        telemetry = nil
-        connectedName = nil
-        lastFrame = []
         gattInfo = nil
-        phase = .idle
+        // 意外掉线时先留着上一条数据，仪表页不会闪成「——」
+        if clearData {
+            telemetry = nil
+            connectedName = nil
+            lastFrame = []
+            phase = .idle
+        }
+    }
+
+    // MARK: 断线自动重连
+
+    private func cancelReconnect() {
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        reconnectAttempts = 0
+    }
+
+    private func scheduleReconnect() {
+        reconnectTimer?.invalidate()
+        guard peripheral != nil else { return }
+        let delay = min(0.4 * Double(reconnectAttempts + 1), 3.0)
+        reconnectAttempts += 1
+        if reconnectAttempts > 8 {
+            cancelReconnect()
+            teardown(clearData: true)
+            lastError = "重连 8 次都没成功，请靠近电池或重新搜索"
+            return
+        }
+        let t = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            guard let self, let p = self.peripheral else { return }
+            self.phase = .connecting
+            p.delegate = self
+            self.manager?.connect(p, options: BmsCentral.connectOptions)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        reconnectTimer = t
     }
 
     // MARK: 轮询 + 试通道
 
+    /// 轮询周期：默认 400ms（2.5 次/秒）。以前 1 秒一次，肉眼看就是「数据慢半拍」。
+    private var pollInterval: TimeInterval {
+        let ms = UserDefaults.standard.double(forKey: "bms_poll_ms")
+        return ms >= 200 ? ms / 1000.0 : 0.4
+    }
+
     private func beginPolling() {
         pollTimer?.invalidate()
-        let t = Timer(timeInterval: 1.0, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
+        let t = Timer(timeInterval: pollInterval, target: self, selector: #selector(tick),
+                      userInfo: nil, repeats: true)
         RunLoop.main.add(t, forMode: .common)
         pollTimer = t
         tick()
     }
 
     @objc private func tick() {
-        guard let p = peripheral else { return }
-        guard !writeCandidates.isEmpty else { return }
+        guard let p = peripheral, !writeCandidates.isEmpty else { return }
+
+        // 假在线：还连着但 5 秒没有一帧，说明链路已经僵了 —— 主动断开重建
+        if gotFrame, Date().timeIntervalSince(lastFrameAt) > 5 {
+            lastError = "5 秒没数据，正在重建连接…"
+            awaitingReply = false
+            manager?.cancelPeripheralConnection(p)
+            return
+        }
+
+        // 上一次请求还没回音就先别追着写，避免把模块问崩（有的板子一忙就掉线）
+        if awaitingReply, Date().timeIntervalSince(lastWriteAt) < 0.7 { return }
+
+        // 频率改了就地重建定时器
+        if abs((pollTimer?.timeInterval ?? 0) - pollInterval) > 0.01 {
+            beginPolling()
+            return
+        }
+
+        switchProbeIfNeeded()
+
         let w = writeCandidates[min(probeIndex, writeCandidates.count - 1)]
         writeChar = w
-        // 有 withResponse 就用它：这些串口模块在 withoutResponse 下偶尔丢包
+        // 能不带响应就不带：省一个来回，数据更跟手；模块不支持再退回 withResponse
         let type: CBCharacteristicWriteType =
-            w.properties.contains(.write) ? .withResponse : .withoutResponse
+            w.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+        awaitingReply = (type == .withResponse)
+        lastWriteAt = Date()
         p.writeValue(Data(AntBmsParser.statusRequest), for: w, type: type)
     }
 
-    /// 2.5 秒还没回一帧就换下一个写特征值试试。
+    /// 还没出数据时，每 1.5 秒换下一个写特征值试。
     /// 保护板模块的分通道五花八门（Data / honeTX / screenTX / powerTX…），
-    /// 与其猜，不如一个个试过去，哪条回数据就记住哪条。
+    /// 与其猜，不如一个个试过去，哪条回数据就锁定哪条。
+    private func switchProbeIfNeeded() {
+        guard !gotFrame, writeCandidates.count > 1 else { return }
+        guard Date().timeIntervalSince(lastProbeAt) > 1.5 else { return }
+        lastProbeAt = Date()
+        probeIndex = (probeIndex + 1) % writeCandidates.count
+        updateGattInfo()
+    }
+
     private func startProbeWatchdog() {
-        probeTimer?.invalidate()
-        guard writeCandidates.count > 1 else { return }
-        let t = Timer(timeInterval: 2.5, repeats: true) { [weak self] _ in
-            guard let self, self.started, !self.gotFrame else { return }
-            self.probeIndex = (self.probeIndex + 1) % self.writeCandidates.count
-            self.writeChar = self.writeCandidates[self.probeIndex]
-            self.updateGattInfo()
-            self.tick()
-        }
-        RunLoop.main.add(t, forMode: .common)
-        probeTimer = t
+        // 探测已经合进 tick()，这里只留个入口兼容旧的调用点
+        lastProbeAt = Date()
     }
 
     private func updateGattInfo() {
         guard let n = notifyChar, let w = writeChar else { return }
         var s = "FFE0 / \(short(n.uuid)) 通知 → \(short(w.uuid)) 写入"
-        if writeCandidates.count > 1 {
+        if !gotFrame && writeCandidates.count > 1 {
             s += " · 试 \(probeIndex + 1)/\(writeCandidates.count)"
         }
         gattInfo = s
@@ -388,6 +459,7 @@ extension BmsCentral: CBCentralManagerDelegate {
         lastError = nil
         gotFrame = false
         pendingRetries = 0
+        cancelReconnect()
         phase = .connected
         UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: BmsCentral.lastDeviceKey)
         if let n = peripheral.name {
@@ -415,8 +487,17 @@ extension BmsCentral: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        teardown()
-        lastError = describe(error)
+        // 蚂蚁板这类模块时不时自己掉一下，掉线先别把数据清空，直接进重连
+        let auto = UserDefaults.standard.object(forKey: "bms_auto_reconnect") as? Bool ?? true
+        teardown(clearData: false)
+        guard auto else {
+            teardown(clearData: true)
+            lastError = describe(error)
+            return
+        }
+        phase = .connecting
+        lastError = "连接断了，正在重连（第 \(reconnectAttempts + 1) 次）…"
+        scheduleReconnect()
     }
 }
 
@@ -477,11 +558,6 @@ extension BmsCentral: CBPeripheralDelegate {
         }
 
         startIfReady()
-        // 特征值是分服务陆续报上来的，后面又发现新的可写通道就把试通道也开起来
-        if started, probeTimer == nil, !gotFrame, writeCandidates.count > 1 {
-            startProbeWatchdog()
-            updateGattInfo()
-        }
     }
 
     private func startIfReady() {
@@ -527,6 +603,8 @@ extension BmsCentral: CBPeripheralDelegate {
 
         if let t = parser.feed(bytes) {
             gotFrame = true
+            awaitingReply = false
+            lastFrameAt = Date()
             probeTimer?.invalidate()
             probeTimer = nil
             telemetry = t
