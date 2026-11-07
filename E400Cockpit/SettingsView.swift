@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 struct SettingsView: View {
     @EnvironmentObject var central: CockpitCentral
@@ -32,6 +33,11 @@ struct SettingsView: View {
     @AppStorage("value_decimals") private var decimals = 2
     @AppStorage("show_motor_temp") private var showMotorTemp = true
 
+    @AppStorage("gauge_max_rpm") private var maxRPM = 9000.0
+    @AppStorage("boot_animation") private var bootAnimation = true
+    @State private var pickedWallpaper: PhotosPickerItem?
+    @State private var hasWallpaper = WallpaperStore.url != nil
+
     @State private var showAdvanced = false
 
     // MARK: 实时估算
@@ -63,6 +69,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            appearanceSection
             connectionSection
             vehicleSection
             sensorSection
@@ -78,6 +85,44 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity)
         .scrollContentBackground(.hidden)
         .background(Color.black.ignoresSafeArea())
+        .onChange(of: pickedWallpaper) { item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   WallpaperStore.save(data) {
+                    hasWallpaper = true
+                }
+                pickedWallpaper = nil
+            }
+        }
+    }
+
+    // MARK: 外观
+
+    private var appearanceSection: some View {
+        Section {
+            PhotosPicker(selection: $pickedWallpaper, matching: .images, photoLibrary: .shared()) {
+                Label(hasWallpaper ? "更换壁纸" : "选择壁纸图片", systemImage: "photo.on.rectangle.angled")
+            }
+            if hasWallpaper {
+                Button(role: .destructive) {
+                    WallpaperStore.clear()
+                    hasWallpaper = false
+                } label: {
+                    Label("移除壁纸，用默认渐变", systemImage: "trash")
+                }
+            }
+            Toggle("开机自检动画", isOn: $bootAnimation)
+            Picker("圆环满量程", selection: $maxRPM) {
+                Text("6000 rpm").tag(6000.0)
+                Text("9000 rpm").tag(9000.0)
+                Text("12000 rpm").tag(12000.0)
+            }
+        } header: {
+            Text("外观")
+        } footer: {
+            Text("壁纸用横屏图片效果最好，左侧会自动压暗保证数据可读。开机自检动画在连上控制器那一刻播放：指针扫满量程再回落，随后数据卡片逐个浮现。圆环满量程要与你的车实际最高转速匹配，指针才不会长期贴顶。")
+        }
     }
 
     // MARK: 连接
@@ -474,7 +519,7 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本", value: "0.1.3")
+            LabeledContent("版本", value: "0.2.0")
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
             LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
             LabeledContent("屏幕方向", value: "横屏")
