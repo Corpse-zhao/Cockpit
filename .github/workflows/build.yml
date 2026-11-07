@@ -1,0 +1,59 @@
+name: build-ipa
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive (unsigned)
+        run: |
+          xcodebuild archive \
+            -project E400Cockpit.xcodeproj \
+            -scheme E400Cockpit \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/App.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
+
+      - name: Package IPA (ad-hoc signed)
+        run: |
+          mkdir -p build/Payload
+          cp -R "build/App.xcarchive/Products/Applications/E400Cockpit.app" build/Payload/
+          codesign --force --deep --sign - build/Payload/E400Cockpit.app
+          cd build && zip -qry "E400Cockpit-v0.1.0.ipa" Payload
+          cd ..
+          ls -lh build/*.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: E400Cockpit-v0.1.0-ipa
+          path: build/*.ipa
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0
+          name: E400Cockpit v0.1.0
+          body: |
+            凌博 E400 蓝牙仪表 v0.1.0
+
+            - BLE 直连（FFF0 / FFF1 / FFF2）
+            - 凌博协议 AA55 解析（标定握手 + 实时帧）
+            - 仪表页 / 数据台（原始帧监视）/ 设置（轮周长标定）
+
+            ad-hoc 签名，越狱设备经 AppSync / TrollStore / Sideloadly 安装。
+          files: build/*.ipa
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

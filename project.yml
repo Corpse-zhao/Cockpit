@@ -1,0 +1,40 @@
+name: E400Cockpit
+options:
+  bundleIdPrefix: com.corpsezhao
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+targets:
+  E400Cockpit:
+    type: application
+    platform: iOS
+    sources:
+      - path: E400Cockpit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.corpsezhao.e400cockpit
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_BITCODE: "NO"
+    info:
+      path: E400Cockpit/Info.plist
+      properties:
+        CFBundleDisplayName: E400 Cockpit
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSBluetoothAlwaysUsageDescription: 连接凌博 E400 控制器，实时读取车辆行驶数据。
+schemes:
+  E400Cockpit:
+    build:
+      targets:
+        E400Cockpit: all
+    archive:
+      config: Release
