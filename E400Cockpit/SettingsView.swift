@@ -33,8 +33,9 @@ struct SettingsView: View {
     @AppStorage("value_decimals") private var decimals = 2
     @AppStorage("show_motor_temp") private var showMotorTemp = true
 
-    @AppStorage("gauge_max_rpm") private var maxRPM = 9000.0
+    @AppStorage("gauge_max_speed") private var maxSpeed = 140.0
     @AppStorage("boot_animation") private var bootAnimation = true
+    @AppStorage("speed_source") private var speedSource = "auto"
     @State private var pickedWallpaper: PhotosPickerItem?
     @State private var hasWallpaper = WallpaperStore.url != nil
 
@@ -46,6 +47,7 @@ struct SettingsView: View {
 
     @State private var showAdvanced = false
     @State private var showFieldOffsets = false
+    @State private var showGearFinder = false
 
     // MARK: 实时估算
 
@@ -77,6 +79,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             appearanceSection
+            speedSourceSection
             connectionSection
             vehicleSection
             sensorSection
@@ -103,6 +106,10 @@ struct SettingsView: View {
                 pickedWallpaper = nil
             }
         }
+        .sheet(isPresented: $showGearFinder) {
+            GearFinderView()
+                .environmentObject(central)
+        }
     }
 
     // MARK: 外观
@@ -121,15 +128,16 @@ struct SettingsView: View {
                 }
             }
             Toggle("开机自检动画", isOn: $bootAnimation)
-            Picker("圆环满量程", selection: $maxRPM) {
-                Text("6000 rpm").tag(6000.0)
-                Text("9000 rpm").tag(9000.0)
-                Text("12000 rpm").tag(12000.0)
+            Picker("表盘满量程", selection: $maxSpeed) {
+                Text("100").tag(100.0)
+                Text("120").tag(120.0)
+                Text("140").tag(140.0)
+                Text("160").tag(160.0)
             }
         } header: {
             Text("外观")
         } footer: {
-            Text("壁纸用横屏图片效果最好，左侧会自动压暗保证数据可读。开机自检动画在连上控制器那一刻播放：指针扫满量程再回落，随后数据卡片逐个浮现。圆环满量程要与你的车实际最高转速匹配，指针才不会长期贴顶。")
+            Text("壁纸用横屏图片效果最好，左侧会自动压暗保证数据可读。圆盘指针指示的是车速，满量程默认 140 km/h，刻度按 0 / 20 / … / 140 均分 270°。开机自检时指针走 0→满→0→满→0 一个完整轮回，随后数据卡片浮现。")
         }
     }
 
@@ -217,6 +225,59 @@ struct SettingsView: View {
         } footer: {
             Text("控制器型号连上后从广播名自动识别（LBMC- 后面那串），也会把数据帧里出现的可打印字符串收集成候选。车型和控制器都可以手改，改过之后不再自动覆盖。小数位影响电压/电流/功率/温度/转把，速度保持整数。")
         }
+    }
+
+    // MARK: 测速来源
+
+    private var speedSourceSection: some View {
+        Section {
+            Picker("测速来源", selection: $speedSource) {
+                Text("GPS 优先").tag("auto")
+                Text("只用 GPS").tag("gps")
+                Text("只用轮速").tag("wheel")
+            }
+            .pickerStyle(.segmented)
+
+            HStack {
+                Text("当前表显")
+                Spacer()
+                Text(String(format: "%.2f km/h", central.speedKmh))
+                    .monospacedDigit()
+                    .foregroundColor(sourceColor)
+            }
+            LabeledContent("GPS 状态", value: central.gpsStatusText)
+            LabeledContent("GPS 速度", value: central.gpsActive
+                           ? String(format: "%.2f km/h", central.gpsSpeedKmh) : "—")
+            LabeledContent("轮速换算", value: String(format: "%.2f km/h", central.wheelSpeedKmh))
+
+            if let dev = wheelDeviation {
+                HStack {
+                    Text("轮速偏差")
+                    Spacer()
+                    Text(dev.0)
+                        .monospacedDigit()
+                        .foregroundColor(abs(dev.1) > 5 ? .orange : .secondary)
+                }
+            }
+        } header: {
+            Text("测速来源")
+        } footer: {
+            Text("默认「GPS 优先」：有 GPS 速度就用 GPS，进隧道/地库失锁时自动退回轮速换算，出隧道再切回来。\n\nGPS 速度来自 CoreLocation 的多普勒解算，精度通常 ±0.5 km/h，不受胎压、载重、磨损、下沉量影响——比轮周长估算可靠得多。下面的「轮速偏差」可以直接告诉你这套轮胎模型差了几个百分点，想校周长就照着改。")
+        }
+    }
+
+    private var sourceColor: Color {
+        central.speedSourceLabel == "GPS" ? .green : .orange
+    }
+
+    /// (文案, 百分比偏差)；GPS 与轮速都在动的时候才有意义
+    private var wheelDeviation: (String, Double)? {
+        guard central.gpsActive,
+              central.gpsSpeedKmh > 2,
+              central.wheelSpeedKmh > 2 else { return nil }
+        let d = central.wheelSpeedKmh - central.gpsSpeedKmh
+        let pct = d / max(central.gpsSpeedKmh, 0.1) * 100
+        return (String(format: "%+.2f km/h（%+.1f%%）", d, pct), pct)
     }
 
     // MARK: 车辆与载荷
@@ -349,7 +410,7 @@ struct SettingsView: View {
         } header: {
             Text("下沉与周长估算")
         } footer: {
-            Text("速度 = 转速 × 滚动周长 × 60 ÷ 1,000,000。下沉 10mm 意味着周长短 2.5% 左右——这正是空转时表显虚高的来源。")
+            Text("这一套只在「轮速」模式下影响车速。现在默认用 GPS 测速，这里的估算主要用来给隧道里兜底，以及在「测速来源」里和 GPS 对比偏差。")
         }
     }
 
@@ -483,6 +544,13 @@ struct SettingsView: View {
 
     private var fieldOffsetSection: some View {
         Section {
+            Button {
+                showGearFinder = true
+            } label: {
+                Label("打开挡位定位工具（差分找偏移）", systemImage: "scope")
+                    .font(.subheadline)
+            }
+
             HStack {
                 Text("最近帧长")
                 Spacer()
@@ -629,9 +697,10 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本", value: "0.2.3")
+            LabeledContent("版本", value: "0.3.0")
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
             LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
+            LabeledContent("测速", value: "GPS（CoreLocation）优先，轮速兜底")
             LabeledContent("屏幕方向", value: "横屏")
         } header: {
             Text("关于")

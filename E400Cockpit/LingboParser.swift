@@ -70,6 +70,9 @@ final class LingboParser {
     private(set) var lastFrameLength = 0
     /// 最近一帧实时帧（0x62）的原始字节，供数据台逐字节查看
     private(set) var lastRealtimeFrame: [UInt8] = []
+    /// 最近一帧标定/配置帧（0x60）的原始字节。
+    /// 我们以前只解析前 16 字节就丢掉其余部分，而挡位、限速这类参数很可能就在尾巴上。
+    private(set) var lastConfigFrame: [UInt8] = []
     /// 最近一次解析用了哪些偏移
     private(set) var trace = FieldTrace()
     var layout = Layout()
@@ -84,6 +87,7 @@ final class LingboParser {
         stream.removeAll()
         lastFrameLength = 0
         lastRealtimeFrame = []
+        lastConfigFrame = []
         trace = FieldTrace()
     }
 
@@ -150,6 +154,7 @@ final class LingboParser {
 
     /// 0x60 标定帧: @4 相电流基准 @6 相电压基准 @8 母线电流分母 @10 母线电压分母 @12 控制模式 @13 扭矩上限
     private func applyCalibration(_ f: [UInt8]) {
+        lastConfigFrame = f
         guard f.count >= 16 else { return }
         let divI = u16le(f, 8)
         let divV = u16le(f, 10)

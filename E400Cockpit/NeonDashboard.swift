@@ -109,12 +109,14 @@ struct WallpaperBackground: View {
 struct NeonGauge: View {
     var progress: Double        // 0...1
     var speed: Double
-    var rpm: Int
     var powerKW: Double
     var temp: Double?
-    var maxRPM: Double
+    var voltage: Double
+    var maxSpeed: Double        // 满量程车速，默认 140
 
     private let sweep: Double = 270
+    /// 主刻度数量：0,20,40…140 共 8 个
+    private var majorCount: Int { 8 }
 
     var body: some View {
         GeometryReader { geo in
@@ -145,7 +147,7 @@ struct NeonGauge: View {
                     .rotationEffect(.degrees(90))
                     .frame(width: R * 2, height: R * 2)
 
-                // 进度（品红填充）
+                // 进度（品红填充）——跟指针同步，表示车速占满量程的比例
                 if p > 0.001 {
                     Circle()
                         .trim(from: 0, to: sweep / 360 * p)
@@ -158,20 +160,21 @@ struct NeonGauge: View {
                         .frame(width: R * 2, height: R * 2)
                 }
 
-                // 刻度数字 0...9
-                ForEach(0...9, id: \.self) { i in
-                    let deg = 90 + sweep * Double(i) / 9
+                // 主刻度数字：0 / 20 / … / 140
+                ForEach(0..<majorCount, id: \.self) { i in
+                    let deg = 90 + sweep * Double(i) / Double(majorCount - 1)
                     let rad = deg * .pi / 180
                     let rr = R - ring * 0.95
-                    Text("\(i)")
-                        .font(.system(size: side * 0.048, weight: .semibold, design: .rounded))
+                    Text("\(Int(maxSpeed) * i / (majorCount - 1))")
+                        .font(.system(size: side * 0.046, weight: .semibold, design: .rounded))
                         .foregroundColor(.white.opacity(0.92))
                         .position(x: cx + cos(rad) * rr, y: cy + sin(rad) * rr)
                 }
 
-                // 次刻度
-                ForEach(0..<45, id: \.self) { i in
-                    let deg = 90 + sweep * Double(i) / 44
+                // 次刻度（每个主刻度分 4 格）
+                ForEach(0..<(majorCount * 4 - 3), id: \.self) { i in
+                    let total = majorCount * 4 - 4
+                    let deg = 90 + sweep * Double(i) / Double(total)
                     let rad = deg * .pi / 180
                     let r1 = R + ring * 0.52
                     let r2 = R + ring * 0.78
@@ -179,11 +182,11 @@ struct NeonGauge: View {
                         path.move(to: CGPoint(x: cx + cos(rad) * r1, y: cy + sin(rad) * r1))
                         path.addLine(to: CGPoint(x: cx + cos(rad) * r2, y: cy + sin(rad) * r2))
                     }
-                    .stroke(Color.white.opacity(i % 5 == 0 ? 0.55 : 0.22),
-                            lineWidth: i % 5 == 0 ? 1.6 : 1)
+                    .stroke(Color.white.opacity(i % 4 == 0 ? 0.55 : 0.22),
+                            lineWidth: i % 4 == 0 ? 1.6 : 1)
                 }
 
-                // 指针
+                // 指针（按车速）
                 Path { path in
                     let rad = (90 + sweep * p) * .pi / 180
                     path.move(to: CGPoint(x: cx, y: cy))
@@ -196,52 +199,45 @@ struct NeonGauge: View {
                     .fill(Color(red: 1.0, green: 0.18, blue: 0.22))
                     .frame(width: side * 0.028, height: side * 0.028)
 
-                // 中心读数（速度在上，转速在下）
+                // 中心读数：速度为主，下面补功率与电压/温度（不再显示转速）
                 VStack(spacing: 0) {
                     Text(Fmt.speed(speed))
-                        .font(.system(size: side * 0.132, weight: .bold, design: .rounded))
+                        .font(.system(size: side * 0.150, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
-                        .minimumScaleFactor(0.6)
+                        .minimumScaleFactor(0.5)
                         .lineLimit(1)
                     Text("km/h")
-                        .font(.system(size: side * 0.040))
+                        .font(.system(size: side * 0.042))
                         .foregroundColor(.white.opacity(0.62))
-                        .padding(.top, -side * 0.005)
+                        .padding(.top, -side * 0.008)
 
                     divider(side: side)
 
-                    Text(rpmLarge)
-                        .font(.system(size: side * 0.140, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                    Text(String(format: "%.2f", powerKW))
+                        .font(.system(size: side * 0.082, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.92))
                         .minimumScaleFactor(0.6)
                         .lineLimit(1)
-                    Text("×1000 rpm")
-                        .font(.system(size: side * 0.040))
-                        .foregroundColor(.white.opacity(0.62))
-                        .padding(.top, -side * 0.005)
+                    Text("kW")
+                        .font(.system(size: side * 0.036))
+                        .foregroundColor(.white.opacity(0.55))
 
                     divider(side: side)
 
                     HStack(spacing: side * 0.045) {
-                        Text(String(format: "%.0f%%", min(max(powerKW / 5.0, 0), 1) * 100))
+                        Text(String(format: "%.1fV", voltage))
                         Text(tempText)
                     }
                     .font(.system(size: side * 0.042, weight: .medium, design: .monospaced))
                     .foregroundColor(.white.opacity(0.88))
                 }
-                .frame(width: side * 0.52)
+                .frame(width: side * 0.56)
             }
         }
     }
 
-    private var rpmLarge: String {
-        // 超出 10000 直接显示原值，否则按 ×1000 显示一位小数
-        if rpm >= 10000 { return "\(rpm)" }
-        return String(format: "%.1f", Double(rpm) / 1000.0)
-    }
-
     private var tempText: String {
-        guard let t = temp else { return "——" }
+        guard let t = temp else { return "—" }
         return String(format: "%.0f℃", t)
     }
 
@@ -249,7 +245,7 @@ struct NeonGauge: View {
         Rectangle()
             .fill(Color.white.opacity(0.42))
             .frame(width: side * 0.30, height: 1)
-            .padding(.vertical, side * 0.028)
+            .padding(.vertical, side * 0.026)
     }
 }
 
@@ -259,6 +255,7 @@ struct NeonStatusPanel: View {
     @EnvironmentObject var central: CockpitCentral
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("show_motor_temp") private var showMotorTemp = true
+    @AppStorage("gear_manual") private var manualGear = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -324,13 +321,14 @@ struct NeonStatusPanel: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
+            // 速度来源：GPS / 轮速，各带一个图标一眼分清
             HStack(spacing: 5) {
-                Image(systemName: "arrow.triangle.2.circlepath")
+                Image(systemName: sourceIcon)
                     .font(.system(size: 9))
-                Text("周长 \(Fmt.num(central.wheelCircMM, "mm")) · \(central.wheelCircSource)")
-                    .font(.system(size: 10, design: .monospaced))
+                Text(central.speedSourceLabel)
+                    .font(.system(size: 10, weight: .semibold))
             }
-            .foregroundColor(.white.opacity(0.55))
+            .foregroundColor(sourceColor)
 
             Spacer()
 
@@ -360,6 +358,16 @@ struct NeonStatusPanel: View {
         .glassCard()
     }
 
+    private var sourceIcon: String {
+        central.speedSourceLabel == "GPS" ? "location.fill" : "arrow.triangle.2.circlepath"
+    }
+
+    private var sourceColor: Color {
+        central.speedSourceLabel == "GPS"
+            ? Color(red: 0.2, green: 0.95, blue: 0.55)
+            : Color(red: 1.0, green: 0.72, blue: 0.35)
+    }
+
     /// 29 字节为标准长帧（转把+挡位齐全）；24～28 缺字段；<24 只剩基础量
     private var frameLengthColor: Color {
         let n = central.lastFrameLength
@@ -376,7 +384,7 @@ struct NeonStatusPanel: View {
             : Color(red: 1.0, green: 0.28, blue: 0.30)
 
         var rows: [(String, String, Color)] = [
-            ("挡位", t?.gear.map { "P\($0)" } ?? "——", .white),
+            ("挡位", gearText(t), .white),
             ("转速", t.map { "\($0.rpm)" } ?? "——", .white),
             ("控制器温度", Fmt.temp(t?.controllerTemp), tempColor(t?.controllerTemp))
         ]
@@ -391,9 +399,31 @@ struct NeonStatusPanel: View {
              (t?.busCurrent ?? 0) < -0.005 ? Color(red: 0.2, green: 0.95, blue: 0.55)
                 : ((t?.busCurrent ?? 0) > 0.005 ? NeonTheme.pinkLight : .white)),
             ("功率", t.map { Fmt.num($0.busVoltage * $0.busCurrent / 1000.0, "kW") } ?? "——", .white),
-            ("转把", t?.throttlePercent.map { Fmt.percent($0) } ?? "——", .white)
+            ("定位", gpsText, gpsColor)
         ]
         return rows
+    }
+
+    /// 挡位：解析值优先；解析不到时用「手动挡位」兜底，并标注来源
+    private func gearText(_ t: LingboParser.Telemetry?) -> String {
+        if let g = t?.gear { return "P\(g)" }
+        if manualGear > 0 { return "P\(manualGear)·手" }
+        return "——"
+    }
+
+    private var gpsText: String {
+        if central.gpsActive {
+            return String(format: "±%.0fm", central.gpsAccuracyM)
+        }
+        if central.gpsAccuracyM > 0 {
+            return String(format: "弱 ±%.0f", central.gpsAccuracyM)
+        }
+        return "搜索中"
+    }
+
+    private var gpsColor: Color {
+        central.gpsActive ? Color(red: 0.2, green: 0.95, blue: 0.55)
+            : Color(red: 1.0, green: 0.62, blue: 0.25)
     }
 
     private func tempColor(_ v: Double?) -> Color {
@@ -456,13 +486,13 @@ extension View {
 
 struct NeonDashboard: View {
     @EnvironmentObject var central: CockpitCentral
-    @AppStorage("gauge_max_rpm") private var maxRPM = 9000.0
+    @AppStorage("gauge_max_speed") private var maxSpeed = 140.0
     @AppStorage("boot_animation") private var bootAnimation = true
 
     @State private var hasBooted = false
     @State private var booting = false
     @State private var bootProgress: Double = 0
-    @State private var bootRPM: Double = 0
+    @State private var bootSpeed: Double = 0
     @State private var revealCards = false
     @State private var appear = false
     @State private var bootTimer: Timer?
@@ -479,13 +509,13 @@ struct NeonDashboard: View {
 
                 NeonGauge(
                     progress: gaugeProgress,
-                    speed: booting ? 0 : central.speedKmh,
-                    rpm: booting ? Int(bootRPM) : (central.telemetry?.rpm ?? 0),
+                    speed: booting ? bootSpeed : central.speedKmh,
                     powerKW: booting
                         ? 0
                         : (central.telemetry?.busVoltage ?? 0) * (central.telemetry?.busCurrent ?? 0) / 1000.0,
                     temp: booting ? nil : central.telemetry?.controllerTemp,
-                    maxRPM: maxRPM
+                    voltage: booting ? 0 : (central.telemetry?.busVoltage ?? 0),
+                    maxSpeed: maxSpeed
                 )
                 .frame(width: 310)
                 .scaleEffect(booting ? 0.985 : 1.0)
@@ -511,8 +541,7 @@ struct NeonDashboard: View {
 
     private var gaugeProgress: Double {
         if booting { return bootProgress }
-        let rpm = Double(central.telemetry?.rpm ?? 0)
-        return min(max(rpm / max(maxRPM, 1), 0), 1)
+        return min(max(central.speedKmh / max(maxSpeed, 1), 0), 1)
     }
 
     // MARK: 阶段
@@ -539,23 +568,23 @@ struct NeonDashboard: View {
             hasBooted = false
             booting = false
             bootProgress = 0
-            bootRPM = 0
+            bootSpeed = 0
             revealCards = false
         default:
             break
         }
     }
 
-    /// 开机自检：指针从 0 扫到满量程 → 回零 → 数据卡片逐个浮现
+    /// 开机自检：指针按车速刻度 0→满 → 回零 → 0→满 → 回零，走完一个轮回后数据卡片浮现
     private func runBootSequence() {
         bootTimer?.invalidate()
         booting = true
         revealCards = false
         bootProgress = 0
-        bootRPM = 0
+        bootSpeed = 0
 
         let seg = 0.42          // 每段时长
-        let total = seg * 4     // 0→9 → 9→0 → 0→9 → 9→0，一个完整轮回
+        let total = seg * 4     // 0→满 → 满→0 → 0→满 → 满→0，一个完整轮回
         let started = Date()
 
         bootTimer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { timer in
@@ -568,12 +597,12 @@ struct NeonDashboard: View {
                 let goingUp = (idx % 2 == 0)
                 let v = goingUp ? eased : (1 - eased)
                 bootProgress = v
-                bootRPM = maxRPM * v
+                bootSpeed = maxSpeed * v
             } else {
                 // 第四段结束时已经回到 0，直接收尾
                 timer.invalidate()
                 bootProgress = 0
-                bootRPM = 0
+                bootSpeed = 0
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     withAnimation(.easeOut(duration: 0.42)) { revealCards = true }
                 }

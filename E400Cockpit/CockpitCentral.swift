@@ -50,8 +50,43 @@ final class CockpitCentral: NSObject, ObservableObject {
     @Published var lastFrameLength = 0
     /// 最近一帧实时帧原始字节，供数据台逐字节核对
     @Published var lastRealtimeFrame: [UInt8] = []
+    /// 最近一帧配置帧（0x60）原始字节
+    @Published var lastConfigFrame: [UInt8] = []
     /// 最近一次解析实际用了哪些偏移
     @Published var fieldTrace = LingboParser.FieldTrace()
+
+    // MARK: 测速（GPS 优先，轮速兜底）
+
+    private let gps = GPSSpeedProvider()
+    /// 由控制器转速 + 轮周长换算出来的车速
+    @Published var wheelSpeedKmh: Double = 0
+    /// GPS 解算出来的车速
+    @Published var gpsSpeedKmh: Double = 0
+    @Published var gpsActive = false
+    @Published var gpsAccuracyM: Double = -1
+    @Published var gpsStatusText = "未启用"
+    /// 当前速度来自哪里："GPS" / "轮速" / "GPS 无信号"
+    @Published var speedSourceLabel = "—"
+    private var lastSpeedDate = Date()
+
+    override init() {
+        super.init()
+        gps.onUpdate = { [weak self] kmh, acc, valid in
+            guard let self else { return }
+            self.gpsSpeedKmh = kmh
+            self.gpsAccuracyM = acc
+            self.gpsActive = valid
+            self.recomputeSpeed()
+        }
+        gps.onStatus = { [weak self] text, ok in
+            guard let self else { return }
+            self.gpsStatusText = text
+            if !ok {
+                self.gpsActive = false
+                self.recomputeSpeed()
+            }
+        }
+    }
 
     static let serviceUUID = CBUUID(string: "FFF0")
     static let notifyUUID = CBUUID(string: "FFF1")
@@ -115,6 +150,13 @@ final class CockpitCentral: NSObject, ObservableObject {
         appendLine("", text)
     }
 
+    /// 主动再读一次配置帧（0x60）。只读命令，用来把配置区完整抓下来查挡位。
+    func requestConfigFrame() {
+        guard let p = peripheral, let w = writeChar else { return }
+        p.writeValue(Data(Lingbo.calibrationRequest), for: w, type: .withoutResponse)
+        log("手动重读配置帧（0x60）")
+    }
+
     // MARK: - 轮询
 
     private func beginPolling() {
@@ -147,17 +189,48 @@ final class CockpitCentral: NSObject, ObservableObject {
         let scale = UserDefaults.standard.object(forKey: "rpm_scale") as? Double ?? 1.0
         var v = Double(t.rpm) * scale * circumf * 60.0 / 1_000_000.0
         if v < 0 { v = 0 }
-        if v > 160 { v = 160 }
-        speedKmh = v
+        if v > 200 { v = 200 }
+        wheelSpeedKmh = v
         wheelCircMM = circumf
         wheelCircSource = TireModel.circumferenceSourceText()
+        lastTelemetryDate = Date()
+        recomputeSpeed()
+    }
+
+    /// 按设置决定仪表用哪个速度，并顺带积分本次里程
+    private func recomputeSpeed() {
+        let mode = UserDefaults.standard.string(forKey: "speed_source") ?? "auto"
+        var v: Double = 0
+        var label = "轮速"
+
+        switch mode {
+        case "wheel":
+            v = wheelSpeedKmh
+            label = "轮速"
+        case "gps":
+            v = gpsActive ? gpsSpeedKmh : 0
+            label = gpsActive ? "GPS" : "GPS 无信号"
+        default:   // auto：GPS 优先，失锁时退回轮速
+            if gpsActive {
+                v = gpsSpeedKmh
+                label = "GPS"
+            } else {
+                v = wheelSpeedKmh
+                label = "轮速"
+            }
+        }
+
+        if v < 0 { v = 0 }
+        if v > 200 { v = 200 }
+        speedKmh = v
+        speedSourceLabel = label
 
         let now = Date()
-        let dt = now.timeIntervalSince(lastTelemetryDate)
+        let dt = now.timeIntervalSince(lastSpeedDate)
         if dt > 0 && dt < 5 {
             tripKm += v * dt / 3600.0
         }
-        lastTelemetryDate = now
+        lastSpeedDate = now
     }
 
     private func appendLine(_ hex: String, _ note: String) {
@@ -291,8 +364,10 @@ extension CockpitCentral: CBCentralManagerDelegate {
         gattSummary = nil
         pollingStarted = false
         tripKm = 0
+        lastSpeedDate = Date()
         lastFrameLength = 0
         lastRealtimeFrame = []
+        lastConfigFrame = []
         fieldTrace = LingboParser.FieldTrace()
         lastTelemetryDate = Date()
         phase = .connected
@@ -332,6 +407,10 @@ extension CockpitCentral: CBCentralManagerDelegate {
         pollTimer?.invalidate()
         pollTimer = nil
         connectedName = nil
+        gps.stop()
+        gpsActive = false
+        speedKmh = 0
+        speedSourceLabel = "—"
         log("连接已断开")
         if reconnectAttempts < 3 {
             reconnectAttempts += 1
@@ -449,9 +528,11 @@ extension CockpitCentral: CBPeripheralDelegate {
         log("协议驱动：\(driver.displayName)，开始 500ms 轮询")
         UserDefaults.standard.set(transportLabel ?? "\(n.uuid.uuidString)",
                                   forKey: "last_transport")
+        // 速度主干走 GPS：连上控制器就开始定位
+        lastSpeedDate = Date()
+        gps.start()
         beginPolling()
     }
-
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
             log("订阅通知失败：\(error.localizedDescription)")
@@ -473,6 +554,7 @@ extension CockpitCentral: CBPeripheralDelegate {
         let t = driver.feed(bytes)
         lastFrameLength = driver.lastFrameLength
         if !driver.lastRealtimeFrame.isEmpty { lastRealtimeFrame = driver.lastRealtimeFrame }
+        if !driver.lastConfigFrame.isEmpty { lastConfigFrame = driver.lastConfigFrame }
         fieldTrace = driver.trace
         appendConsole(bytes, t)
         if !wasCalibrated, driver.isCalibrated {

@@ -18,8 +18,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.corpsezhao.e400cockpit
-        MARKETING_VERSION: "0.2.3"
-        CURRENT_PROJECT_VERSION: "8"
+        MARKETING_VERSION: "0.3.0"
+        CURRENT_PROJECT_VERSION: "9"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_BITCODE: "NO"
@@ -27,8 +27,8 @@ targets:
       path: E400Cockpit/Info.plist
       properties:
         CFBundleDisplayName: E400 Cockpit
-        CFBundleShortVersionString: "0.2.3"
-        CFBundleVersion: "8"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "9"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -37,6 +37,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIRequiresFullScreen: true
         NSBluetoothAlwaysUsageDescription: 通过蓝牙连接电动车辆控制器，实时读取行驶数据。
+        NSLocationWhenInUseUsageDescription: 使用 GPS 计算车速与里程，比轮速换算更准确。
 schemes:
   E400Cockpit:
     build:

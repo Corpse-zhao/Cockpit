@@ -19,6 +19,8 @@ protocol ControllerDriver: AnyObject {
     var lastFrameLength: Int { get }
     /// 最近一帧实时帧的原始字节（供数据台逐字节核对布局）
     var lastRealtimeFrame: [UInt8] { get }
+    /// 最近一帧标定/配置帧（0x60）的原始字节
+    var lastConfigFrame: [UInt8] { get }
     /// 最近一次解析实际取用的字段偏移
     var trace: LingboParser.FieldTrace { get }
 
