@@ -38,13 +38,56 @@ final class LingboParser {
         var raw: [UInt8] = []
     }
 
+    /// 字段偏移覆盖。
+    ///
+    /// 标准 29 字节实时帧里：转把电压在 @22（u16，0.01V）、挡位在 @27（低 4 位）。
+    /// 但不同固件会裁掉尾部字段——E400Max-CAN 实际只回 23～24 字节，
+    /// 于是这两个字段落在了帧外。这里留出手动覆盖口子，配合「数据台」的
+    /// 逐字节视图，可以按真实固件对齐偏移，而不是靠猜。
+    struct Layout {
+        /// nil = 自动（标准 @22）
+        var throttleOffset: Int?
+        /// nil = 自动（标准 @27）
+        var gearOffset: Int?
+        /// 短帧（25…28 字节）时是否把 @24 状态标志的低 4 位当挡位
+        var shortFrameGearFallback = false
+    }
+
+    /// 实际取用的字段位置，供数据台显示「这格数据是从第几字节读的」
+    struct FieldTrace {
+        var throttleOffset: Int?
+        var gearOffset: Int?
+        var gearFallback = false
+    }
+
     private(set) var calibration = Calibration()
+    /// 最近一帧的完整长度（含帧头与校验），用于诊断字段偏移
+    private(set) var lastFrameLength = 0
+    /// 最近一帧实时帧（0x62）的原始字节，供数据台逐字节查看
+    private(set) var lastRealtimeFrame: [UInt8] = []
+    /// 最近一次解析用了哪些偏移
+    private(set) var trace = FieldTrace()
+    var layout = Layout()
+
     private var stream: [UInt8] = []
     private static let capacity = 512
 
     func reset() {
         calibration = Calibration()
         stream.removeAll()
+        lastFrameLength = 0
+        lastRealtimeFrame = []
+        trace = FieldTrace()
+    }
+
+    /// 从设置页读取偏移覆盖（每次轮询调用，改设置即时生效）
+    func applyLayoutFromDefaults() {
+        let d = UserDefaults.standard
+        let t = d.object(forKey: "throttle_offset") as? Int ?? -1
+        let g = d.object(forKey: "gear_offset") as? Int ?? -1
+        layout.throttleOffset = (t >= 0 && t <= 40) ? t : nil
+        layout.gearOffset = (g >= 0 && g <= 40) ? g : nil
+        layout.shortFrameGearFallback = d.bool(forKey: "gear_short_fallback")
     }
 
     /// 喂入 BLE 收到的字节块，返回本块中最后一帧有效实时数据（若有）
@@ -69,6 +112,7 @@ final class LingboParser {
             }
             if stream.count - idx < frameLen { break }
             let frame = Array(stream[idx..<(idx + frameLen)])
+            lastFrameLength = frameLen
             let sum = frame.dropLast().reduce(UInt32(0)) { $0 &+ UInt32($1) }
             if UInt8(truncatingIfNeeded: sum) != frame[frameLen - 1] {
                 idx += 1
@@ -109,11 +153,13 @@ final class LingboParser {
     }
 
     /// 0x62 实时帧: @4 转速(有符号) @6 相电流²(推断) @10 母线电压原始值 @12 母线电流原始值(有符号)
-    /// @14 控制器温度 @16 电机温度(推断) @18 32位故障位图 @22 转把电压(0.01V) @27 挡位
+    /// @14 控制器温度 @16 电机温度(推断) @18 32位故障位图 @22 转把电压(0.01V) @24 状态标志 @27 挡位
     private func parseRealtime(_ f: [UInt8]) -> Telemetry {
         var t = Telemetry()
         t.date = Date()
         t.raw = f
+        lastRealtimeFrame = f
+        trace = FieldTrace()
 
         let rawRpm = i16le(f, 4)
         t.rpm = abs(Int(rawRpm))
@@ -135,16 +181,29 @@ final class LingboParser {
 
         t.fault = u32le(f, 18)
 
-        if f.count >= 25 {
-            let volts = Double(u16le(f, 22)) * 0.01
+        // 转把：默认 @22（u16，需帧长 ≥ 24）；手动指定偏移时优先用指定的
+        let tOff = layout.throttleOffset ?? 22
+        if f.count >= tOff + 2 {
+            let volts = Double(u16le(f, tOff)) * 0.01
             if volts >= 0 && volts <= 4.95 {
                 t.throttleVolts = volts
                 let pct = (volts - 0.85) / (4.2 - 0.85) * 100.0
                 t.throttlePercent = min(100.0, max(0.0, pct))
+                trace.throttleOffset = tOff
             }
         }
-        if f.count >= 29 {
+
+        // 挡位：三种来源，优先级 手动偏移 > 标准 @27 > 短帧回退 @24
+        if let go = layout.gearOffset, f.count > go {
+            t.gear = Int(f[go] & 0x0F)
+            trace.gearOffset = go
+        } else if f.count >= 29 {
             t.gear = Int(f[27] & 0x0F)
+            trace.gearOffset = 27
+        } else if layout.shortFrameGearFallback, f.count >= 25 {
+            t.gear = Int(f[24] & 0x0F)
+            trace.gearOffset = 24
+            trace.gearFallback = true
         }
         return t
     }

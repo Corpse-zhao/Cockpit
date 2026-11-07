@@ -46,6 +46,12 @@ final class CockpitCentral: NSObject, ObservableObject {
     @Published var identity: ControllerIdentity?
     /// 帧里扫出的型号候选，供设置页一键采用
     @Published var modelCandidates: [String] = []
+    /// 最近一帧的完整长度（含帧头与校验）——挡位/转把显示不出来时，先看这个
+    @Published var lastFrameLength = 0
+    /// 最近一帧实时帧原始字节，供数据台逐字节核对
+    @Published var lastRealtimeFrame: [UInt8] = []
+    /// 最近一次解析实际用了哪些偏移
+    @Published var fieldTrace = LingboParser.FieldTrace()
 
     static let serviceUUID = CBUUID(string: "FFF0")
     static let notifyUUID = CBUUID(string: "FFF1")
@@ -121,6 +127,7 @@ final class CockpitCentral: NSObject, ObservableObject {
 
     @objc private func tick() {
         guard let p = peripheral, let w = writeChar else { return }
+        driver.applyLayoutFromDefaults()
         let cmd = driver.nextRequestFrame()
         p.writeValue(Data(cmd), for: w, type: .withoutResponse)
     }
@@ -160,7 +167,21 @@ final class CockpitCentral: NSObject, ObservableObject {
                 note = "标定参数帧"
             case 0x62:
                 if let t {
-                    note = String(format: "实时 rpm=%d V=%.1f A=%.1f 故障=0x%X", t.rpm, t.busVoltage, t.busCurrent, t.fault & 0xFFFF)
+                    let len = t.raw.count
+                    var extras: [String] = []
+                    if let to = driver.trace.throttleOffset {
+                        extras.append("转把@\(to)=\(String(format: "%.2f", t.throttleVolts ?? 0))V")
+                    } else {
+                        extras.append("转把 无")
+                    }
+                    if let go = driver.trace.gearOffset {
+                        extras.append("挡位@\(go)=\(t.gear ?? 0)\(driver.trace.gearFallback ? "(回退)" : "")")
+                    } else {
+                        extras.append("挡位 无")
+                    }
+                    note = String(format: "实时 len=%d rpm=%d V=%.1f A=%.1f 故障=0x%X | ",
+                                  len, t.rpm, t.busVoltage, t.busCurrent, t.fault & 0xFFFF)
+                        + extras.joined(separator: " ")
                 } else {
                     note = "实时帧（等待标定）"
                 }
@@ -169,6 +190,50 @@ final class CockpitCentral: NSObject, ObservableObject {
             }
         }
         appendLine(hex, note)
+    }
+
+    // MARK: - 诊断导出
+
+    /// 把最近一帧实时帧 + 关键解码结果拼成一段可直接发出去的文本
+    func diagnosticReport() -> String {
+        var lines: [String] = []
+        lines.append("控制器 \(connectedName ?? "-") / \(identity?.suggestedLabel ?? "未识别")")
+        lines.append("通道 \(transportLabel ?? "-")")
+        lines.append("标定 \(driver.calibrationSummary ?? "未标定")")
+        lines.append("最近帧长 \(driver.lastFrameLength) 字节")
+        let f = lastRealtimeFrame
+        if f.isEmpty {
+            lines.append("（尚无实时帧）")
+        } else {
+            let cmd = f.count > 3 ? f[3] : 0
+            lines.append("命令 0x" + String(format: "%02X", cmd))
+            for row in stride(from: 0, to: f.count, by: 8) {
+                let end = min(row + 8, f.count)
+                var hexPart = ""
+                for i in row..<end { hexPart += String(format: "%02X ", f[i]) }
+                while hexPart.count < 24 { hexPart += " " }
+                var ascii = ""
+                for i in row..<end {
+                    let b = f[i]
+                    ascii += (b >= 0x20 && b < 0x7F) ? String(UnicodeScalar(b)) : "."
+                }
+                let offsetText = String(format: "%02X", row)
+                lines.append("\(offsetText)  \(hexPart) \(ascii)")
+            }
+            if f.count >= 22 {
+                let v = telemetry?.busVoltage ?? 0
+                let a = telemetry?.busCurrent ?? 0
+                let r = telemetry?.rpm ?? 0
+                lines.append("解码 V=" + String(format: "%.2f", v)
+                             + " A=" + String(format: "%.2f", a)
+                             + " rpm=\(r)")
+            }
+            lines.append("转把: " + (telemetry?.throttleVolts.map { String(format: "%.2f V", $0) } ?? "无")
+                         + "  偏移 " + (fieldTrace.throttleOffset.map { "@\($0)" } ?? "未取到"))
+            lines.append("挡位: " + (telemetry?.gear.map { "P\($0)" } ?? "无")
+                         + "  偏移 " + (fieldTrace.gearOffset.map { "@\($0)" } ?? "未取到"))
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -219,6 +284,9 @@ extension CockpitCentral: CBCentralManagerDelegate {
         gattSummary = nil
         pollingStarted = false
         tripKm = 0
+        lastFrameLength = 0
+        lastRealtimeFrame = []
+        fieldTrace = LingboParser.FieldTrace()
         lastTelemetryDate = Date()
         phase = .connected
         log("已连接 \(peripheral.name ?? "")，正在枚举全部 GATT 服务…")
@@ -396,6 +464,9 @@ extension CockpitCentral: CBPeripheralDelegate {
         }
         let wasCalibrated = driver.isCalibrated
         let t = driver.feed(bytes)
+        lastFrameLength = driver.lastFrameLength
+        if !driver.lastRealtimeFrame.isEmpty { lastRealtimeFrame = driver.lastRealtimeFrame }
+        fieldTrace = driver.trace
         appendConsole(bytes, t)
         if !wasCalibrated, driver.isCalibrated {
             log("标定完成：\(driver.calibrationSummary ?? "")")

@@ -38,7 +38,13 @@ struct SettingsView: View {
     @State private var pickedWallpaper: PhotosPickerItem?
     @State private var hasWallpaper = WallpaperStore.url != nil
 
+    // 协议字段偏移覆盖
+    @AppStorage("throttle_offset") private var throttleOffset = -1
+    @AppStorage("gear_offset") private var gearOffset = -1
+    @AppStorage("gear_short_fallback") private var gearShortFallback = false
+
     @State private var showAdvanced = false
+    @State private var showFieldOffsets = false
 
     // MARK: 实时估算
 
@@ -78,6 +84,7 @@ struct SettingsView: View {
             frontTireSection
             overrideSection
             rpmSection
+            fieldOffsetSection
             advancedSection
             aboutSection
         }
@@ -471,6 +478,101 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: 字段布局（挡位 / 转把）
+
+    private var fieldOffsetSection: some View {
+        Section {
+            HStack {
+                Text("最近帧长")
+                Spacer()
+                Text(central.lastFrameLength == 0 ? "未收到" : "\(central.lastFrameLength) 字节")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(frameLengthColor)
+            }
+
+            HStack {
+                Text("转把")
+                Spacer()
+                Text(throttleReadout)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(central.fieldTrace.throttleOffset == nil ? .secondary : .primary)
+            }
+
+            HStack {
+                Text("挡位")
+                Spacer()
+                Text(gearReadout)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(central.fieldTrace.gearOffset == nil ? .secondary : .primary)
+            }
+
+            DisclosureGroup("手动调整字段偏移", isExpanded: $showFieldOffsets) {
+                offsetStepper("转把电压偏移", value: $throttleOffset, autoLabel: "自动 @22")
+                offsetStepper("挡位偏移", value: $gearOffset, autoLabel: "自动 @27")
+
+                Toggle("短帧挡位回退（读 @24 低 4 位）", isOn: $gearShortFallback)
+                    .font(.subheadline)
+
+                Text("标准 29 字节帧里挡位在 @27、转把在 @22。若你的控制器只回 24～28 字节，这两个字段就在帧外了——把偏移往前挪，或者打开短帧回退试试。每一步改动下一帧（500ms）立刻生效，改到仪表页的「挡位」出现合理数字为止。")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
+                Button("全部恢复自动") {
+                    throttleOffset = -1
+                    gearOffset = -1
+                    gearShortFallback = false
+                }
+                .font(.caption)
+            }
+
+            Button {
+                UIPasteboard.general.string = central.diagnosticReport()
+            } label: {
+                Label("复制协议诊断（发给我就能定位）", systemImage: "doc.on.doc")
+                    .font(.footnote)
+            }
+        } header: {
+            Text("挡位与转把")
+        } footer: {
+            Text("这两格有值的前提是：帧里真的带了这两个字段。帧长 ≥ 25 才有转把，≥ 29 才有标准挡位。仪表页右下角的「帧长」颜色就是判据：绿=字段齐全，黄=缺挡位，橙=基本量。")
+        }
+    }
+
+    private var frameLengthColor: Color {
+        let n = central.lastFrameLength
+        if n == 0 { return .secondary }
+        if n >= 29 { return .green }
+        if n >= 25 { return .yellow }
+        return .orange
+    }
+
+    private var throttleReadout: String {
+        guard let v = central.telemetry?.throttleVolts else { return "无（帧长 \(central.lastFrameLength)）" }
+        let off = central.fieldTrace.throttleOffset.map { "@\($0)" } ?? ""
+        let pct = central.telemetry?.throttlePercent ?? 0
+        return String(format: "%.2f V %@ · %.0f%%", v, off, pct)
+    }
+
+    private var gearReadout: String {
+        guard let g = central.telemetry?.gear else { return "无（帧长 \(central.lastFrameLength)）" }
+        let off = central.fieldTrace.gearOffset.map { "@\($0)" } ?? ""
+        let tag = central.fieldTrace.gearFallback ? " · 回退" : ""
+        return "P\(g) \(off)\(tag)"
+    }
+
+    private func offsetStepper(_ title: String, value: Binding<Int>, autoLabel: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.subheadline)
+            Spacer()
+            Text(value.wrappedValue < 0 ? autoLabel : "@\(value.wrappedValue)")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(.secondary)
+            Stepper("", value: value, in: -1...40)
+                .labelsHidden()
+        }
+    }
+
     // MARK: 高级
 
     private var advancedSection: some View {
@@ -519,7 +621,7 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本", value: "0.2.1")
+            LabeledContent("版本", value: "0.2.2")
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
             LabeledContent("通道发现", value: "FFF0 优先，否则自动探测")
             LabeledContent("屏幕方向", value: "横屏")

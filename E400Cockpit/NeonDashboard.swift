@@ -334,6 +334,18 @@ struct NeonStatusPanel: View {
 
             Spacer()
 
+            // 帧长：挡位/转把 不显示时的第一手线索
+            HStack(spacing: 4) {
+                Text("帧长")
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.42))
+                Text(central.lastFrameLength == 0 ? "—" : "\(central.lastFrameLength)")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(frameLengthColor)
+            }
+
+            Spacer()
+
             HStack(spacing: 5) {
                 Text("本次")
                     .font(.system(size: 10))
@@ -346,6 +358,15 @@ struct NeonStatusPanel: View {
         .padding(.horizontal, 11)
         .padding(.vertical, 7)
         .glassCard()
+    }
+
+    /// 29 字节为标准长帧（转把+挡位齐全）；24～28 缺字段；<24 只剩基础量
+    private var frameLengthColor: Color {
+        let n = central.lastFrameLength
+        if n == 0 { return .white.opacity(0.35) }
+        if n >= 29 { return Color(red: 0.2, green: 0.95, blue: 0.55) }
+        if n >= 25 { return .yellow }
+        return Color(red: 1.0, green: 0.55, blue: 0.25)
     }
 
     private var tiles: [(String, String, Color)] {
@@ -533,35 +554,30 @@ struct NeonDashboard: View {
         bootProgress = 0
         bootRPM = 0
 
-        let lap = 0.70          // 单圈扫描时长
-        let laps: Double = 2    // 扫两圈
-        let sweep = lap * laps
-        let fallBack = 0.42     // 回零
+        let seg = 0.42          // 每段时长
+        let total = seg * 4     // 0→9 → 9→0 → 0→9 → 9→0，一个完整轮回
         let started = Date()
 
         bootTimer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { timer in
             let elapsed = Date().timeIntervalSince(started)
 
-            if elapsed <= sweep {
-                // 每圈都从 0 扫到满量程，圈末瞬间跳回 0 再扫
-                let inLap = elapsed.truncatingRemainder(dividingBy: lap) / lap
-                let eased = 1 - pow(1 - inLap, 2.1)     // easeOut：前快后慢
-                bootProgress = eased
-                bootRPM = maxRPM * eased
-            } else if elapsed <= sweep + fallBack {
-                let k = (elapsed - sweep) / fallBack
-                let eased = max(0, 1 - k * k)       // 回落略带回弹感
-                bootProgress = eased
-                bootRPM = maxRPM * eased
+            if elapsed <= total {
+                let idx = min(3, Int(elapsed / seg))          // 第几段
+                let k = (elapsed - Double(idx) * seg) / seg   // 段内进度
+                let eased = 1 - pow(1 - k, 2.0)
+                let goingUp = (idx % 2 == 0)
+                let v = goingUp ? eased : (1 - eased)
+                bootProgress = v
+                bootRPM = maxRPM * v
             } else {
+                // 第四段结束时已经回到 0，直接收尾
                 timer.invalidate()
                 bootProgress = 0
                 bootRPM = 0
-                // 卡片逐个浮现
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     withAnimation(.easeOut(duration: 0.42)) { revealCards = true }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
                     booting = false
                 }
             }

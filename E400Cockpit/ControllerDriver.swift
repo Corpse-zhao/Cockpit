@@ -15,8 +15,18 @@ protocol ControllerDriver: AnyObject {
     /// 连接的设备名前缀提示，用于扫描列表排序（可为空）
     var nameHint: String { get }
 
+    /// 最近一帧的总长度，0 表示尚无有效帧
+    var lastFrameLength: Int { get }
+    /// 最近一帧实时帧的原始字节（供数据台逐字节核对布局）
+    var lastRealtimeFrame: [UInt8] { get }
+    /// 最近一次解析实际取用的字段偏移
+    var trace: LingboParser.FieldTrace { get }
+
     /// 清空状态，连接新设备时调用
     func reset()
+
+    /// 从设置读取字段偏移覆盖（用户改了偏移要即时生效）
+    func applyLayoutFromDefaults()
 
     /// 下一条要发出的请求帧。轮询器每 500ms 取一次。
     func nextRequestFrame() -> [UInt8]
