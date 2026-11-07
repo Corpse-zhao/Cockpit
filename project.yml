@@ -27,7 +27,11 @@ targets:
       path: E400Cockpit/Info.plist
       properties:
         CFBundleDisplayName: E400 Cockpit
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
         UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSBluetoothAlwaysUsageDescription: 连接凌博 E400 控制器，实时读取车辆行驶数据。
