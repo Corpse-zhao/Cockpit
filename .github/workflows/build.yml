@@ -15,6 +15,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 版本号只维护在 project.yml 一处，工作流自动跟随，避免忘记改 tag
+      - name: Read version
+        id: ver
+        run: |
+          V=$(grep -m1 'MARKETING_VERSION' project.yml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$V"
+
       - name: Show toolchain
         run: |
           xcodebuild -version
@@ -45,36 +53,39 @@ jobs:
 
       - name: Ad-hoc sign + package IPA
         run: |
+          V="${{ steps.ver.outputs.version }}"
           APP=$(find build/Build/Products -maxdepth 3 -name "E400Cockpit.app" | head -1)
           echo "APP=$APP"
           /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP" || true
           /usr/bin/codesign -dv "$APP" 2>&1 || true
           rm -rf Payload && mkdir -p Payload
           cp -R "$APP" Payload/
-          zip -qry "E400Cockpit-v0.2.1.ipa" Payload
-          ls -lh E400Cockpit-v0.2.1.ipa
-          unzip -l E400Cockpit-v0.2.1.ipa | head -20
+          zip -qry "E400Cockpit-v${V}.ipa" Payload
+          ls -lh "E400Cockpit-v${V}.ipa"
+          unzip -l "E400Cockpit-v${V}.ipa" | head -20
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: E400Cockpit-ipa
-          path: E400Cockpit-v0.2.1.ipa
+          path: E400Cockpit-v${{ steps.ver.outputs.version }}.ipa
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.1
-          name: E400Cockpit v0.2.1
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: E400Cockpit v${{ steps.ver.outputs.version }}
           body: |
-            凌博 E400 蓝牙仪表 v0.2.1
+            凌博 E400 蓝牙仪表 v${{ steps.ver.outputs.version }}
 
-            - BLE 直连（FFF0 / FFF1 / FFF2）
-            - 凌博协议 AA55 解析（标定握手 + 实时帧）
-            - 仪表页 / 数据台（原始帧监视）/ 设置（轮周长标定）
+            - 开机自检动画改为完整一轮回：0→9 → 9→0 → 0→9 → 9→0
+            - 仪表页右下角新增「帧长」指示（绿=字段齐全 / 黄 / 橙=基本量）
+            - 数据台新增逐字节帧结构视图，标出每个已知字段的偏移
+            - 挡位 / 转把支持手动偏移覆盖 + 短帧 @24 回退开关
+            - 一键「复制协议诊断」，可直接发给开发者定位
 
             ad-hoc 签名，越狱设备经 TrollStore / AppSync / Sideloadly 安装。
-          files: E400Cockpit-v0.2.1.ipa
+          files: E400Cockpit-v${{ steps.ver.outputs.version }}.ipa
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
