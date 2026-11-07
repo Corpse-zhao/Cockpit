@@ -37,9 +37,11 @@ final class BmsCentral: NSObject, ObservableObject {
     static let serviceUUID = CBUUID(string: "FFE0")
     static let notifyUUID = CBUUID(string: "FFE1")
     static let writeUUID = CBUUID(string: "FFE2")
-    /// 允许系统在后台自动重连，短距离掉线后更容易自己回来
+    /// 允许系统在后台自动重连，短距离掉线后更容易自己回来。
+    /// 用原始 key 而不是 CBConnectPeripheralOptionEnableAutoReconnect 常量——
+    /// 那个常量是 iOS 17 才有的，直接引用会让 iOS 16 的部署目标编译不过。
     static let connectOptions: [String: Any] = [
-        CBConnectPeripheralOptionEnableAutoReconnect: true
+        "kCBConnectPeripheralOptionEnableAutoReconnect": true
     ]
     /// 记住上次连过的设备，下次一键重连
     static let lastDeviceKey = "bms_last_device"
