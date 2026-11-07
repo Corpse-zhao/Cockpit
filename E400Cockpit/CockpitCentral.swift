@@ -17,7 +17,7 @@ final class CockpitCentral: NSObject, ObservableObject {
         let id: UUID
         let name: String
         var rssi: Int
-        /// 是否为已知控制器（LBMC 前缀）
+        /// 是否为已知控制器品牌（凌博 / 远驱 / Sabvoton / Kelly…）
         var isKnown: Bool = false
     }
 
@@ -342,15 +342,15 @@ extension CockpitCentral: CBCentralManagerDelegate {
         let name = peripheral.name
             ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
             ?? "未知设备"
-        let isLingbo = name.hasPrefix(CockpitCentral.namePrefix)
+        let isKnown = ControllerIdentifier.isKnownName(name)
         let showAll = UserDefaults.standard.bool(forKey: CockpitCentral.showAllDevicesKey)
-        guard isLingbo || showAll else { return }
+        guard isKnown || showAll else { return }
         if let idx = devices.firstIndex(where: { $0.id == peripheral.identifier }) {
             devices[idx].rssi = RSSI.intValue
-            devices[idx].isKnown = isLingbo
+            devices[idx].isKnown = isKnown
         } else {
             devices.append(DiscoveredDevice(id: peripheral.identifier, name: name,
-                                            rssi: RSSI.intValue, isKnown: isLingbo))
+                                            rssi: RSSI.intValue, isKnown: isKnown))
             // 已知控制器排前面
             devices.sort { ($0.isKnown ? 0 : 1, $0.name) < ($1.isKnown ? 0 : 1, $1.name) }
         }

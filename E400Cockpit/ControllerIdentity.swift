@@ -31,6 +31,18 @@ enum ControllerIdentifier {
         ("NINGBO", "宁波")
     ]
 
+    /// 广播名是否属于已知控制器品牌（用于扫描过滤，不再是"仅凌博"）
+    static func isKnownName(_ name: String) -> Bool {
+        let upper = name.uppercased()
+        return brandPrefixes.contains { upper.contains($0.0) }
+    }
+
+    /// 品牌名（仅用于界面标注）
+    static func brandName(for name: String) -> String? {
+        let upper = name.uppercased()
+        return brandPrefixes.first { upper.contains($0.0) }?.1
+    }
+
     /// 从设备广播名识别，如 "LBMC-A70814" → 凌博 / A70814
     static func fromName(_ name: String?) -> ControllerIdentity? {
         guard let name, !name.isEmpty else { return nil }

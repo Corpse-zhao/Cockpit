@@ -168,7 +168,7 @@ struct ScanView: View {
                                         .font(.system(.body, design: .monospaced).bold())
                                         .foregroundColor(.white)
                                     if d.isKnown {
-                                        Text("已知")
+                                        Text(ControllerIdentifier.brandName(for: d.name) ?? "已识别")
                                             .font(.system(size: 9))
                                             .padding(.horizontal, 5)
                                             .padding(.vertical, 1)
