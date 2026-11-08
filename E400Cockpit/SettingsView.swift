@@ -53,6 +53,7 @@ struct SettingsView: View {
 
     // 主题
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
+    @AppStorage("dashboard_style") private var styleRaw = DashboardStyle.neon.rawValue
 
     // 协议字段偏移覆盖
     @AppStorage("throttle_offset") private var throttleOffset = -1
@@ -180,6 +181,8 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         Section {
+            stylePicker
+
             themePicker
 
             PhotosPicker(selection: $pickedWallpaper, matching: .images, photoLibrary: .shared()) {
@@ -228,7 +231,56 @@ struct SettingsView: View {
         } header: {
             Text("外观")
         } footer: {
-            Text("壁纸有两种填充方式：\n· 铺满屏幕——照片等比放大到盖满整块屏，多出来的部分裁掉（4:3 的照片会放大 6 成再切上下，画面看起来“被放大”就是这个原因）；\n· 完整显示——整张照片按比例缩到框内，左右（或上下）空档用同一张图的模糊版填满，一点不裁。\n\n铺满模式下导入后可以拖动、双指缩放挑显示区域，框内就是仪表页真正显示的范围；原始图单独留存，随时能重新裁剪而不会越裁越糊。主题色只改强调色这一条主轴（进度弧、发光、关键数值、按钮），毛玻璃卡片和白色刻度保持不变。圆盘指针指示车速，满量程默认 140 km/h。")
+            Text("壁纸有两种填充方式：\n· 铺满屏幕——照片等比放大到盖满整块屏，多出来的部分裁掉（4:3 的照片会放大 6 成再切上下，画面看起来“被放大”就是这个原因）；\n· 完整显示——整张照片按比例缩到框内，左右（或上下）空档用同一张图的模糊版填满，一点不裁。\n\n铺满模式下导入后可以拖动、双指缩放挑显示区域，框内就是仪表页真正显示的范围；原始图单独留存，随时能重新裁剪而不会越裁越糊。\n\n仪表样式：霓虹（圆盘 + 进度弧）、赛道（斜切色块 + 速度横条）、液态（液面就是车速）、示波（车速画成实时波形）、轨道（一颗星按车速公转）。五套吃同一份数据，切换即时生效、不用重连，也都能用壁纸。\n\n主题色对五套全部生效——进度弧、液面、波形、轨道、横条、按钮都取主题色；只有绿/橙/红留给状态语义（正常 / 警告 / 故障），换什么主题都不变，免得误读。圆盘指针与满量程只影响霓虹和轨道（默认 140 km/h）。")
+        }
+    }
+
+    // MARK: 仪表样式
+
+    private var stylePicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("仪表样式")
+                    .font(.subheadline)
+                Spacer()
+                Text(DashboardStyle(rawValue: styleRaw)?.caption ?? "")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(DashboardStyle.allCases) { s in
+                        Button {
+                            styleRaw = s.rawValue
+                        } label: {
+                            VStack(spacing: 0) {
+                                StylePreviewThumb(style: s,
+                                                  theme: ThemeStore.preset(for: themeID))
+                                    .frame(width: 94, height: 52)
+                                Text(s.title)
+                                    .font(.system(size: 10,
+                                                  weight: styleRaw == s.rawValue ? .semibold : .regular))
+                                    .foregroundColor(styleRaw == s.rawValue ? .primary : .secondary)
+                                    .padding(.vertical, 5)
+                            }
+                            .frame(width: 94)
+                            .background(RoundedRectangle(cornerRadius: 9)
+                                .fill(Color.white.opacity(0.06)))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9)
+                                    .stroke(styleRaw == s.rawValue
+                                            ? ThemeStore.preset(for: themeID).accent
+                                            : Color.white.opacity(0.10),
+                                            lineWidth: styleRaw == s.rawValue ? 1.8 : 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+                .padding(.horizontal, 2)
+            }
         }
     }
 
@@ -1064,4 +1116,125 @@ struct SettingsView: View {
 func hideKeyboard() {
     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                     to: nil, from: nil, for: nil)
+}
+
+// MARK: - 样式缩略图
+
+/// 设置里那五张小卡片。不加载真实仪表，只用主题色画几个几何形状示意骨架——
+/// 既轻，又能一眼看出「这张长什么样」，而且换主题色时会跟着变。
+private struct StylePreviewThumb: View {
+    var style: DashboardStyle
+    var theme: ThemePreset
+
+    var body: some View {
+        GeometryReader { g in
+            let w = g.size.width
+            let h = g.size.height
+
+            ZStack {
+                LinearGradient(colors: [theme.baseDark, theme.deep],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+
+                switch style {
+                case .neon:
+                    Circle()
+                        .trim(from: 0, to: 0.75)
+                        .stroke(theme.accent, style: StrokeStyle(lineWidth: 3.5, lineCap: .butt))
+                        .rotationEffect(.degrees(135))
+                        .frame(width: h * 0.62, height: h * 0.62)
+                    Circle()
+                        .trim(from: 0, to: 0.38)
+                        .stroke(theme.accentLight, style: StrokeStyle(lineWidth: 3.5, lineCap: .butt))
+                        .rotationEffect(.degrees(135))
+                        .frame(width: h * 0.62, height: h * 0.62)
+
+                case .race:
+                    VStack(alignment: .leading, spacing: 5) {
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(theme.accent)
+                            .frame(width: w * 0.34, height: 7)
+                            .skew(-0.28)
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(Color.white.opacity(0.16))
+                            .frame(width: w * 0.80, height: 6)
+                            .overlay(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(LinearGradient(colors: [theme.accent, theme.accentLight],
+                                                         startPoint: .leading, endPoint: .trailing))
+                                    .frame(width: w * 0.46, height: 6)
+                            }
+                            .skew(-0.28)
+                        HStack(spacing: 4) {
+                            ForEach(0..<3, id: \.self) { _ in
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(Color.white.opacity(0.12))
+                                    .frame(width: w * 0.16, height: 10)
+                            }
+                        }
+                    }
+                    .padding(.leading, -6)
+
+                case .liquid:
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.white.opacity(0.05))
+                            .overlay(alignment: .bottom) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(LinearGradient(colors: [theme.accentLight, theme.accent],
+                                                         startPoint: .top, endPoint: .bottom))
+                                    .frame(height: h * 0.44)
+                                    .padding(.horizontal, 1)
+                            }
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(theme.accent.opacity(0.35), lineWidth: 1)
+                            )
+                            .frame(width: w * 0.17, height: h * 0.68)
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.white.opacity(0.20))
+                            .frame(width: w * 0.34, height: h * 0.30)
+                    }
+
+                case .scope:
+                    ZStack {
+                        Path { p in
+                            var y: CGFloat = 4
+                            while y < h {
+                                p.move(to: CGPoint(x: 0, y: y))
+                                p.addLine(to: CGPoint(x: w, y: y))
+                                y += 9
+                            }
+                        }
+                        .stroke(theme.accent.opacity(0.14), lineWidth: 0.8)
+
+                        Path { p in
+                            p.move(to: CGPoint(x: 0, y: h * 0.72))
+                            p.addLine(to: CGPoint(x: w * 0.24, y: h * 0.62))
+                            p.addLine(to: CGPoint(x: w * 0.44, y: h * 0.70))
+                            p.addLine(to: CGPoint(x: w * 0.64, y: h * 0.34))
+                            p.addLine(to: CGPoint(x: w * 0.82, y: h * 0.52))
+                            p.addLine(to: CGPoint(x: w, y: h * 0.24))
+                        }
+                        .stroke(theme.accent, style: StrokeStyle(lineWidth: 1.8, lineJoin: .round))
+                    }
+                    .padding(.horizontal, 6)
+
+                case .orbit:
+                    Circle()
+                        .stroke(theme.accent.opacity(0.30), lineWidth: 1)
+                        .frame(width: h * 0.66, height: h * 0.66)
+                    Circle()
+                        .trim(from: 0, to: 0.62)
+                        .stroke(theme.accent, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: h * 0.50, height: h * 0.50)
+                    Circle()
+                        .fill(theme.accentLight)
+                        .frame(width: 5, height: 5)
+                        .offset(x: h * 0.24, y: -h * 0.22)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
 }

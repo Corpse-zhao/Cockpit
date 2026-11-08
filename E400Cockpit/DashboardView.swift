@@ -9,7 +9,7 @@ struct DashboardView: View {
             case .idle, .scanning, .connecting:
                 ScanView()
             case .connected, .calibrated, .online:
-                NeonDashboard()
+                DashboardRoot()
             }
         }
         .background(Color.black.ignoresSafeArea())
