@@ -45,6 +45,71 @@ final class AntBmsParser {
         var protection: UInt64 = 0
         var warning: UInt64 = 0
         var balancing: UInt64 = 0
+        /// 已经翻译成中文的保护 / 告警条目（协议里定义了名字的那几位）
+        var protectionItems: [String] = []
+        var warningItems: [String] = []
+        /// 厂家自定义 / 保留位。蚂蚁协议只定义了 bit0–15，高位各固件的写法不一样，
+        /// 有的板子会往里塞状态位——单独列出来，不再当成「有告警」吓人。
+        var protectionReserved: [Int] = []
+        var warningReserved: [Int] = []
+    }
+
+    /// 一条按位的保护 / 告警定义
+    struct Flag {
+        let bit: Int
+        let name: String
+    }
+
+    /// 告警位（bit0–15 是协议里有名字的，6/7 保留）
+    static let warningFlags: [Flag] = [
+        Flag(bit: 0, name: "单体过压告警"),
+        Flag(bit: 1, name: "单体欠压告警"),
+        Flag(bit: 2, name: "总压过压告警"),
+        Flag(bit: 3, name: "总压欠压告警"),
+        Flag(bit: 4, name: "充电过流告警"),
+        Flag(bit: 5, name: "放电过流告警"),
+        Flag(bit: 8, name: "充电高温告警"),
+        Flag(bit: 9, name: "放电高温告警"),
+        Flag(bit: 10, name: "充电低温告警"),
+        Flag(bit: 11, name: "放电低温告警"),
+        Flag(bit: 12, name: "环境高温告警"),
+        Flag(bit: 13, name: "环境低温告警"),
+        Flag(bit: 14, name: "MOS 高温告警"),
+        Flag(bit: 15, name: "电量低告警"),
+    ]
+
+    /// 保护位
+    static let protectionFlags: [Flag] = [
+        Flag(bit: 0, name: "单体过压"),
+        Flag(bit: 1, name: "单体欠压"),
+        Flag(bit: 2, name: "总压过压"),
+        Flag(bit: 3, name: "总压欠压"),
+        Flag(bit: 4, name: "充电过流"),
+        Flag(bit: 5, name: "放电过流"),
+        Flag(bit: 6, name: "短路"),
+        Flag(bit: 7, name: "充电器过压"),
+        Flag(bit: 8, name: "充电高温"),
+        Flag(bit: 9, name: "放电高温"),
+        Flag(bit: 10, name: "充电低温"),
+        Flag(bit: 11, name: "放电低温"),
+        Flag(bit: 12, name: "MOS 高温"),
+        Flag(bit: 13, name: "环境高温"),
+        Flag(bit: 14, name: "环境低温"),
+    ]
+
+    /// 把 8 字节位图拆成「有名字的条目」+「没有名字的位号」
+    static func decode(_ value: UInt64, _ table: [Flag]) -> (names: [String], reserved: [Int]) {
+        guard value != 0 else { return ([], []) }
+        var names: [String] = []
+        var reserved: [Int] = []
+        for i in 0..<64 where (value >> UInt64(i)) & 1 == 1 {
+            if let f = table.first(where: { $0.bit == i }) {
+                names.append(f.name)
+            } else {
+                reserved.append(i)
+            }
+        }
+        return (names, reserved)
     }
 
     private(set) var telemetry: Telemetry?
@@ -130,6 +195,12 @@ final class AntBmsParser {
         t.protection = bytesToU64(f, 10)
         t.warning = bytesToU64(f, 18)
         t.balancing = bytesToU64(f, 26)
+        let pFlags = AntBmsParser.decode(t.protection, AntBmsParser.protectionFlags)
+        t.protectionItems = pFlags.names
+        t.protectionReserved = pFlags.reserved
+        let wFlags = AntBmsParser.decode(t.warning, AntBmsParser.warningFlags)
+        t.warningItems = wFlags.names
+        t.warningReserved = wFlags.reserved
 
         for i in 0..<cellCount {
             let v = Double(u16(34 + i * 2)) * 0.001

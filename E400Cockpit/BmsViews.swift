@@ -105,6 +105,7 @@ struct BmsDetailView: View {
                         ScrollView {
                             VStack(spacing: 12) {
                                 summary(t)
+                                linkHealth()
                                 temps(t)
                                 mos(t)
                             }
@@ -244,14 +245,117 @@ struct BmsDetailView: View {
                 chip("充电 MOS", t.chargeMosOn ? "导通" : "断开", t.chargeMosOn ? .green : .secondary)
                 chip("放电 MOS", t.dischargeMosOn ? "导通" : "断开", t.dischargeMosOn ? .green : .secondary)
                 chip("均衡", t.balancerOn ? "开启" : "关闭", t.balancerOn ? theme.accentLight : .secondary)
-                chip("保护", t.protection == 0 ? "无" : "有", t.protection == 0 ? .green : .red)
-                chip("告警", t.warning == 0 ? "无" : "有", t.warning == 0 ? .green : .orange)
+                chip("保护", protectionTitle(t),
+                     t.protectionItems.isEmpty ? (t.protectionReserved.isEmpty ? .green : .secondary) : .red)
+                chip("告警", warningTitle(t),
+                     t.warningItems.isEmpty ? (t.warningReserved.isEmpty ? .green : .secondary) : .orange)
                 Spacer()
             }
+            if hasFlags(t) { flagDetail(t) }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(panel)
+    }
+
+    // MARK: 保护 / 告警按位展开
+
+    private func protectionTitle(_ t: AntBmsParser.Telemetry) -> String {
+        if !t.protectionItems.isEmpty {
+            return t.protectionItems.count == 1 ? t.protectionItems[0] : "\(t.protectionItems.count) 项"
+        }
+        return t.protectionReserved.isEmpty ? "无" : "未定义位"
+    }
+
+    private func warningTitle(_ t: AntBmsParser.Telemetry) -> String {
+        if !t.warningItems.isEmpty {
+            return t.warningItems.count == 1 ? t.warningItems[0] : "\(t.warningItems.count) 项"
+        }
+        return t.warningReserved.isEmpty ? "无" : "未定义位"
+    }
+
+    private func hasFlags(_ t: AntBmsParser.Telemetry) -> Bool {
+        !(t.protectionItems.isEmpty && t.warningItems.isEmpty
+          && t.protectionReserved.isEmpty && t.warningReserved.isEmpty)
+    }
+
+    private func flagDetail(_ t: AntBmsParser.Telemetry) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if !t.protectionItems.isEmpty {
+                flagRow("保护", t.protectionItems.joined(separator: " · "), .red)
+            }
+            if !t.warningItems.isEmpty {
+                flagRow("告警", t.warningItems.joined(separator: " · "), .orange)
+            }
+            if !t.protectionReserved.isEmpty || !t.warningReserved.isEmpty {
+                flagRow("未定义位", undefinedBits(t), .secondary)
+            }
+            Text("原始 保护 \(hex(t.protection)) · 告警 \(hex(t.warning)) · 均衡 \(hex(t.balancing))")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(.white.opacity(0.30))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 2)
+    }
+
+    private func undefinedBits(_ t: AntBmsParser.Telemetry) -> String {
+        var parts: [String] = []
+        if !t.warningReserved.isEmpty {
+            parts.append("告警 " + t.warningReserved.map { "位\($0)" }.joined(separator: ","))
+        }
+        if !t.protectionReserved.isEmpty {
+            parts.append("保护 " + t.protectionReserved.map { "位\($0)" }.joined(separator: ","))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func hex(_ v: UInt64) -> String {
+        String(format: "0x%016llX", v)
+    }
+
+    private func flagRow(_ k: String, _ v: String, _ c: Color) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(k)
+                .font(.system(size: 9))
+                .foregroundColor(.white.opacity(0.45))
+                .frame(width: 44, alignment: .leading)
+            Text(v)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(c)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// 链路自检：帧计数 + 最后一帧到现在多久。
+    /// 数值看着「不动」时，先看这里——计数在涨说明板子一直在回，只是电量/电压本来就不会跳。
+    private func linkHealth() -> some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            let age = Date().timeIntervalSince(bms.lastFrameAt)
+            let stale = age > 3
+            HStack(spacing: 14) {
+                info("刷新", "\(bms.frameCount) 帧")
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("最后一帧").font(.system(size: 9)).foregroundColor(.white.opacity(0.45))
+                    Text(ageText(age))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(stale ? .orange : .white)
+                }
+                info("帧长", "\(bms.lastFrame.count) 字节")
+                Spacer()
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(panel)
+    }
+
+    private func ageText(_ s: TimeInterval) -> String {
+        if s < 0 || s > 3600 { return "—" }
+        if s < 1 { return String(format: "%.2f 秒前", s) }
+        if s < 60 { return String(format: "%.1f 秒前", s) }
+        return String(format: "%.0f 秒前", s)
     }
 
     private func info(_ k: String, _ v: String) -> some View {

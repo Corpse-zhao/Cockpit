@@ -389,8 +389,13 @@ final class BmsCentral: NSObject, ObservableObject {
     private func writeStatus(_ p: CBPeripheral) {
         guard let w = writeChar else { return }
         // 能不带响应就不带：省一个来回，数据更跟手；模块不支持再退回 withResponse
-        let type: CBCharacteristicWriteType =
+        var type: CBCharacteristicWriteType =
             w.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+        // 但「2.5 秒没有新帧」时改成要响应的写：有的模块在没有响应的写队列里卡住后会静默丢包，
+        // 带响应的一次写能把队列和链路都拽回来，顺便还能拿到系统的写入错误。
+        if gotFrame, Date().timeIntervalSince(lastFrameAt) > 2.5, w.properties.contains(.write) {
+            type = .withResponse
+        }
         awaitingReply = (type == .withResponse)
         lastWriteAt = Date()
         p.writeValue(Data(AntBmsParser.statusRequest), for: w, type: type)
