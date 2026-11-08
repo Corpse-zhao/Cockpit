@@ -60,12 +60,10 @@ struct PinkDashboard: View {
     @State private var portrait: UIImage?
 
     var body: some View {
-        GeometryReader { geo in
-            let s = min(geo.size.height / 720, geo.size.width / 1280)
-            let w = max(1280, geo.size.width / max(s, 0.001))
+        FullBleedCanvas { w, _ in
             let arc = PinkArc(width: w)
 
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 Color.black
                 backdrop(w: w)
 
@@ -90,13 +88,13 @@ struct PinkDashboard: View {
                     }
                     .frame(width: w, height: 720)
                     .offset(x: f.shakeX * 0.36, y: f.shakeY * 0.36)
-                    .scaleEffect(s * (1 + f.E * 0.012))
+                    // 锚点钉左上，撞一下不会整块往右下飘
+                    .scaleEffect(1 + f.E * 0.012, anchor: .topLeading)
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
+                .frame(width: w, height: 720)
             }
-            .frame(width: geo.size.width, height: geo.size.height)
+            .frame(width: w, height: 720, alignment: .topLeading)
         }
-        .background(Color.black.ignoresSafeArea())
         .opacity(appear ? 1 : 0)
         .onAppear {
             withAnimation(.easeOut(duration: 0.3)) { appear = true }

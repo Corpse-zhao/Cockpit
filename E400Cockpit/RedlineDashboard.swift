@@ -177,20 +177,17 @@ struct RedlineDashboard: View {
     private var phaseOnline: Bool { central.phase == .online }
 
     var body: some View {
-        GeometryReader { geo in
-            // 设计稿 1280×720。按高度铺满，宽度弹性——
-            // 横屏 iPhone 比 16:9 更宽，硬按比例缩放会左右各留一条黑边。
-            let s = min(geo.size.height / 720, geo.size.width / 1280)
-            let w = max(1280, geo.size.width / max(s, 0.001))
+        // 铺满逻辑统一收进 FullBleedCanvas：设计稿 1280×720，
+        // 画布宽度按容器反推（横屏 iPhone 比 16:9 宽，硬缩放就会左右留黑边）。
+        FullBleedCanvas { w, _ in
             let dx = (w - 1280) / 2          // 中间那一组（斜梯+巨字+雷达）居中
             let rx = w - 1280                // 右列贴右边
 
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 Color.black
 
                 RedlineBackdrop(width: w)
                     .frame(width: w, height: 720)
-                    .scaleEffect(s)
 
                 TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
                     let f = engine.step(at: ctx.date, speed: speed, maxSpeed: maxSpeed)
@@ -218,13 +215,13 @@ struct RedlineDashboard: View {
                     }
                     .frame(width: w, height: 720)
                     .offset(x: f.shakeX, y: f.shakeY)
-                    .scaleEffect(s * f.zoom)
+                    // 缩放锚点也在左上：以中心为锚的话，撞一下整块画面会往右下飘
+                    .scaleEffect(f.zoom, anchor: .topLeading)
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
+                .frame(width: w, height: 720)
             }
-            .frame(width: geo.size.width, height: geo.size.height)
+            .frame(width: w, height: 720, alignment: .topLeading)
         }
-        .background(Color.black.ignoresSafeArea())
         .opacity(appear ? 1 : 0)
         .onAppear {
             withAnimation(.easeOut(duration: 0.30)) { appear = true }
@@ -485,12 +482,18 @@ struct RedlineDashboard: View {
     }
 
     private func number(_ f: RedlineFrame) -> some View {
-        Text("\(Int(f.speed.rounded()))")
+        let text = "\(Int(f.speed.rounded()))"
+        // 横向压缩跟着位数走。之前一律压 0.74，三个数字正好铺满 330 宽；
+        // 可只有一个「0」的时候，压完就成了一根细长椭圆，和预览视频里差得远。
+        // 现在一位数不压、两位数轻压，三位数才收到参考图那个比例。
+        let squash: CGFloat = text.count >= 3 ? 0.80 : (text.count == 2 ? 0.92 : 1.00)
+
+        return Text(text)
             .font(RL.num(175))
             .kerning(-12)
             .lineLimit(1)
             .frame(width: 330, height: 160)
-            .scaleEffect(x: 0.74, y: 1)
+            .scaleEffect(x: squash, y: 1)
             .skew(-0.16)
     }
 
@@ -525,7 +528,7 @@ struct RedlineDashboard: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(RL.ink.opacity(0.85))
         }
-        .frame(height: 30)
+        .frame(width: 330, height: 30)   // 钉死宽度，才会和上面的大字同一条中轴
     }
 
     // MARK: 雷达

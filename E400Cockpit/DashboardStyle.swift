@@ -58,6 +58,47 @@ struct DashboardRoot: View {
     }
 }
 
+// MARK: - 设计稿铺满容器
+
+/// 1280×720 设计稿「铺满」容器的唯一正确姿势。
+///
+/// 之前每个仪表都写了一遍 `s = min(h/720, w/1280)` + `.scaleEffect(s)`，
+/// 结果真机上一整块内容只占屏幕中间、左右各留一条黑边——原因是三件事叠在一起：
+/// 1. `.scaleEffect` 只改「画出来」的大小，不改布局大小。宽 1456 的画布缩到 0.54，
+///    在布局里仍然算 1456 宽，父视图按 1456 排版，缩放后再以**中心**为锚缩回去，
+///    整块内容就被推到右下方，左边留黑；
+/// 2. 画布 `w` 大于容器，ZStack 跟着变大，再被外层 `.frame(容器)` 一居中，又偏一次；
+/// 3. 横屏时左右还有一条安全区，没人去吃掉它。
+///
+/// 这里把三件事一次解决：缩放只按高度算、宽度反推（永远够宽）、锚点钉在左上角、
+/// 最外面再套一个刚好等于容器的 frame 并裁掉溢出。
+struct FullBleedCanvas<Content: View>: View {
+    var design: CGSize = CGSize(width: 1280, height: 720)
+    @ViewBuilder var content: (_ canvasWidth: CGFloat, _ scale: CGFloat) -> Content
+
+    var body: some View {
+        GeometryReader { geo in
+            // 正常情况下（横屏 iPhone 比 16:9 宽）按高度定缩放，宽度反推，
+            // 一个像素黑边都不剩；比 16:9 更窄的容器（iPad）才退回按宽度缩放，
+            // 宁可上下留黑，也不把内容裁掉。
+            let s = max(min(geo.size.height / design.height,
+                            geo.size.width / design.width), 0.01)
+            let w = max(design.width, geo.size.width / s)
+            let ox = max(0, (geo.size.width - w * s) / 2)
+            let oy = max(0, (geo.size.height - design.height * s) / 2)
+
+            content(w, s)
+                .frame(width: w, height: design.height, alignment: .topLeading)
+                .scaleEffect(s, anchor: .topLeading)
+                .offset(x: ox, y: oy)
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .clipped()
+        }
+        .ignoresSafeArea(edges: [.horizontal, .top])
+        .background(Color.black.ignoresSafeArea())
+    }
+}
+
 // MARK: - 一份数据，两种画法
 
 /// 把两个 Central 的实时数据摘成纯值。
