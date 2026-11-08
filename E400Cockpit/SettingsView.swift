@@ -51,6 +51,15 @@ struct SettingsView: View {
     /// 壁纸填充方式：false 铺满（裁剪），true 完整显示（模糊边）
     @AppStorage("wallpaper_fit") private var wallpaperFit = false
 
+    // 天气（右上角）
+    @AppStorage(WeatherCenter.enabledKey) private var weatherOn = true
+    @AppStorage(WeatherCenter.cityKey) private var weatherCity = ""
+    @ObservedObject private var weather = WeatherCenter.shared
+
+    // 粉黑仪表正中间那张立绘
+    @State private var pickedPortrait: PhotosPickerItem?
+    @State private var hasPortrait = PortraitStore.exists
+
     // 主题
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
     @AppStorage("dashboard_style") private var styleRaw = DashboardStyle.neon.rawValue
@@ -105,6 +114,8 @@ struct SettingsView: View {
     var body: some View {
         Form {
             appearanceSection
+            weatherSection
+            portraitSection
             speedSourceSection
             connectionSection
             batterySection
@@ -150,6 +161,16 @@ struct SettingsView: View {
                 pickedWallpaper = nil
             }
         }
+        .onChange(of: pickedPortrait) { item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   PortraitStore.save(data) {
+                    hasPortrait = true
+                }
+                pickedPortrait = nil
+            }
+        }
         .sheet(item: $activeSheet) { which in
             switch which {
             case .gearFinder:
@@ -178,6 +199,66 @@ struct SettingsView: View {
     }
 
     // MARK: 外观
+
+    // MARK: 天气
+
+    private var weatherSection: some View {
+        Section {
+            Toggle("顶栏显示天气", isOn: $weatherOn)
+
+            HStack {
+                Text("城市")
+                Spacer()
+                TextField("留空 = 自动定位", text: $weatherCity)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 200)
+            }
+
+            LabeledContent("当前", value: weatherSummary)
+
+            Button("立即刷新") {
+                WeatherCenter.shared.refresh(force: true)
+            }
+            .disabled(!weatherOn)
+        } header: {
+            Text("天气")
+        } footer: {
+            Text("用 Open-Meteo 的免费接口，半小时更新一次。填了城市就按城市取，留空则用手机定位；断网时沿用上一次的数据。")
+        }
+    }
+
+    private var weatherSummary: String {
+        if let at = weather.updatedAt {
+            let f = DateFormatter()
+            f.dateFormat = "HH:mm"
+            return "\(weather.tempText) · \(f.string(from: at)) 更新"
+        }
+        return weather.status
+    }
+
+    // MARK: 中央立绘
+
+    private var portraitSection: some View {
+        Section {
+            PhotosPicker(selection: $pickedPortrait, matching: .images, photoLibrary: .shared()) {
+                Label(hasPortrait ? "更换中央立绘" : "选择中央立绘", systemImage: "person.crop.square")
+            }
+
+            if hasPortrait {
+                LabeledContent("立绘尺寸", value: PortraitStore.sizeText)
+                Button(role: .destructive) {
+                    PortraitStore.clear()
+                    hasPortrait = false
+                } label: {
+                    Text("清除立绘")
+                }
+            }
+        } header: {
+            Text("粉黑仪表 · 中央立绘")
+        } footer: {
+            Text("选一张抠好底的人物图（优先 PNG 透明底），显示在粉黑仪表正中间，加速时轻微上浮。没选过就显示粉光核心。")
+        }
+    }
 
     private var appearanceSection: some View {
         Section {

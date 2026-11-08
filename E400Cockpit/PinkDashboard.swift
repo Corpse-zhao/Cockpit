@@ -1,5 +1,5 @@
 import SwiftUI
-import Foundation
+import UIKit
 
 // MARK: - 粉黑配色
 
@@ -48,25 +48,16 @@ struct PinkDashboard: View {
 
     @AppStorage("vehicle_label") private var vehicleLabel = ""
     @AppStorage("gauge_max_speed") private var maxSpeed = 140.0
-    @AppStorage(TireModel.Keys.frontPressure) private var frontBar = 2.2
-    @AppStorage(TireModel.Keys.rearPressure) private var rearBar = 2.2
-    @AppStorage("odo_km") private var odoKm = 0.0
+    @AppStorage(PortraitStore.versionKey) private var portraitVersion = 0.0
+    @AppStorage(WeatherCenter.enabledKey) private var weatherOn = true
 
     /// 冲击模型和红黑共用一套（见 RedlineDashboard.swift 里的 RedlineEngine）：
     /// 车速差分出加速度 → E 指数衰减，屏幕上的抖动/闪光都由它驱动。
     @State private var engine = RedlineEngine()
+    @ObservedObject private var weather = WeatherCenter.shared
+
     @State private var appear = false
-    @State private var sheet: PinkSheet?
-    @State private var lastTrip = 0.0
-    @State private var clockText = ""
-
-    private enum PinkSheet: String, Identifiable {
-        case bms, console, settings
-        var id: String { rawValue }
-    }
-
-    private var speed: Double { central.speedKmh }
-    private var online: Bool { central.phase == .online }
+    @State private var portrait: UIImage?
 
     var body: some View {
         GeometryReader { geo in
@@ -86,18 +77,15 @@ struct PinkDashboard: View {
                             .frame(width: w, height: 720)
 
                         scaleNumbers(arc: arc, vn: f.vn)
-                        core(f: f, w: w)
-                        topBar(f: f, w: w)
+                        coreBlock(f: f)
+                        clockView()
+                        weatherBadge(w: w)
                         nosTag(f: f)
-                        gearTag(f: f, w: w)
-                        logo()
-                        menu(f: f)
-                        powerBlock(f: f, w: w)
-                        tireBlock()
-                        batteryBlock(f: f, w: w)
-                        odoBlock(w: w)
-
-                        // 冲击：一层粉闪，抖动与缩放在容器上做
+                        logoView()
+                        menuBlock(f: f)
+                        speedBlock(f: f)
+                        controllerBlock()
+                        batteryBlock()
                         impactFlash(w: w, E: f.E)
                     }
                     .frame(width: w, height: 720)
@@ -113,54 +101,45 @@ struct PinkDashboard: View {
         .onAppear {
             withAnimation(.easeOut(duration: 0.3)) { appear = true }
             bms.beginAutoConnect()
-            lastTrip = central.tripKm
-            tickClock()
+            portrait = PortraitStore.image
+            weather.start()
         }
-        .task {
-            // ODO 每 10 秒把「本次里程」的增量并进总里程，避免每帧写 UserDefaults
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                let delta = central.tripKm - lastTrip
-                if delta > 0.001 {
-                    odoKm += delta
-                    lastTrip = central.tripKm
-                } else if delta < -0.001 {
-                    lastTrip = central.tripKm      // 里程被清零
-                }
-                tickClock()
-            }
-        }
-        .sheet(item: $sheet) { which in
-            switch which {
-            case .bms:
-                BmsDetailView().environmentObject(bms)
-            case .console:
-                ConsoleView().environmentObject(central).environmentObject(bms)
-            case .settings:
-                SettingsView().environmentObject(central).environmentObject(bms)
-            }
+        .onDisappear { weather.stop() }
+        .onChange(of: portraitVersion) { _ in
+            portrait = PortraitStore.image
         }
     }
 
     // MARK: 数据
+
+    private var speed: Double { central.speedKmh }
+    private var online: Bool { central.phase == .online }
 
     private var busV: Double { central.telemetry?.busVoltage ?? 0 }
     private var busA: Double { central.telemetry?.busCurrent ?? 0 }
     private var watts: Double { max(0, busV * busA) }
     private var ctrlT: Double? { central.telemetry?.controllerTemp }
     private var motorT: Double? { central.telemetry?.motorTemp }
-    private var gear: String {
-        if let g = central.telemetry?.gear, g > 0 { return "\(g)" }
-        return speed > 1 ? "F" : "N"
-    }
+    private var rpm: Int { central.telemetry?.rpm ?? 0 }
 
     private var soc: Int { bms.telemetry?.soc ?? 0 }
-    private var packTemp: Int { bms.telemetry?.temps.first ?? bms.telemetry?.mosTemp ?? 0 }
 
-    private func tickClock() {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        clockText = f.string(from: Date())
+    /// 预估续航按用户口径：剩余容量 Ah × 1.5km。
+    /// BMS 没给剩余容量就退回「额定容量 × SOC」，两个都没有就显示 --。
+    private var rangeKm: Int? {
+        var ah: Double?
+        if let a = bms.telemetry?.remainingAh, a > 0 {
+            ah = a
+        } else if let cap = bms.telemetry?.capacityAh, cap > 0 {
+            ah = cap * Double(soc) / 100.0
+        }
+        guard let v = ah else { return nil }
+        return Int((v * 1.5).rounded())
+    }
+
+    private func tempText(_ v: Double?) -> String {
+        guard let v = v else { return "--" }
+        return String(format: "%.0f", v)
     }
 
     // MARK: 冲击闪光
@@ -206,57 +185,39 @@ struct PinkDashboard: View {
         .clipped()
     }
 
-    // MARK: 顶栏
+    // MARK: 左上角时间
 
-    private func topBar(f: RedlineFrame, w: CGFloat) -> some View {
-        ZStack(alignment: .topLeading) {
-            HStack(spacing: 0) {
-                Text(clockText.isEmpty ? "--:--" : clockText)
-                    .font(PN.num(46))
-                    .foregroundColor(.white)
-                    .fixedSize()
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
 
-                HStack(alignment: .bottom, spacing: 3) {
-                    ForEach(0..<4, id: \.self) { i in
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color.white.opacity(online ? 0.92 : 0.30))
-                            .frame(width: 4.5, height: CGFloat([8, 13, 18, 23][i]))
-                    }
-                }
-                .frame(height: 24)
-                .padding(.leading, 32)
+    private func clockView() -> some View {
+        TimelineView(.everyMinute) { ctx in
+            Text(Self.clockFormatter.string(from: ctx.date))
+                .font(PN.num(46))
+                .foregroundColor(.white)
+                .fixedSize()
+        }
+        .offset(x: 34, y: 18)
+    }
 
-                HStack(spacing: 13) {
-                    Image(systemName: "bolt.slash")
-                        .font(.system(size: 17))
-                        .foregroundColor(Color.white.opacity(0.75))
-                    Image(systemName: "iphone")
-                        .font(.system(size: 18))
-                        .foregroundColor(Color(red: 0.30, green: 0.49, blue: 1.0))
-                }
-                .padding(.leading, 22)
+    // MARK: 右上角天气
 
-                Spacer(minLength: 12)
-
-                HStack(spacing: 9) {
-                    Image(systemName: "cloud")
-                        .font(.system(size: 26, weight: .regular))
-                        .foregroundColor(.white.opacity(0.9))
-                    Text("\(Int(packTemp))°c")
-                        .font(PN.num(38, .bold))
-                        .foregroundColor(.white)
-                }
+    @ViewBuilder
+    private func weatherBadge(w: CGFloat) -> some View {
+        if weatherOn {
+            HStack(spacing: 9) {
+                Image(systemName: WeatherCenter.symbol(for: weather.code))
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundColor(.white.opacity(weather.code == nil ? 0.35 : 0.92))
+                Text(weather.tempText)
+                    .font(PN.num(36, .bold))
+                    .foregroundColor(.white.opacity(weather.temp == nil ? 0.40 : 1))
             }
-            .frame(width: max(w - 64, 600), height: 52)
-            .offset(x: 34, y: 20)
-
-            Text("READY")
-                .font(.system(size: 42, weight: .heavy))
-                .tracking(3)
-                .foregroundColor(online ? PN.green : Color(red: 0.20, green: 0.31, blue: 0.23))
-                .shadow(color: online ? PN.green.opacity(0.55) : .clear, radius: 10)
-                .frame(width: 220)
-                .position(x: w * 0.39, y: 46)
+            .frame(width: 200, alignment: .trailing)
+            .offset(x: w - 34 - 200, y: 20)
         }
     }
 
@@ -279,15 +240,26 @@ struct PinkDashboard: View {
         }
     }
 
-    // MARK: 中央核心
+    // MARK: 中央立绘 / 核心
 
-    private func core(f: RedlineFrame, w: CGFloat) -> some View {
-        PinkCoreCanvas(vn: f.vn, E: f.E, t: f.t)
-            .frame(width: 320, height: 320)
-            .offset(x: w / 2 + 72 - 160, y: 308)
+    @ViewBuilder
+    private func coreBlock(f: RedlineFrame) -> some View {
+        if let img = portrait {
+            Image(uiImage: img)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 340, height: 400, alignment: .bottom)
+                .shadow(color: PN.pink.opacity(0.50), radius: 28)
+                .offset(x: 702 - 170,
+                        y: 230 - CGFloat(sin(f.t * 1.6)) * 4 - CGFloat(f.E) * 8)
+        } else {
+            PinkCoreCanvas(vn: f.vn, E: f.E, t: f.t)
+                .frame(width: 320, height: 320)
+                .offset(x: 702 - 160, y: 308)
+        }
     }
 
-    // MARK: NOS / GEAR
+    // MARK: NOS
 
     private func nosTag(f: RedlineFrame) -> some View {
         let on = watts > 1500 || f.jolt > 0.5
@@ -299,38 +271,23 @@ struct PinkDashboard: View {
             .offset(x: 396, y: 188)
     }
 
-    private func gearTag(f: RedlineFrame, w: CGFloat) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Text("GEAR")
-                .font(.system(size: 15, weight: .bold))
-                .tracking(2)
-                .foregroundColor(.white.opacity(0.45))
-            Text(gear)
-                .font(.system(size: 46, weight: .heavy))
-                .italic()
-                .foregroundColor(PN.red)
-                .shadow(color: PN.red.opacity(0.8), radius: 10)
-        }
-        .offset(x: w - 294, y: 284)
-    }
-
     // MARK: 左下 logo
 
-    private func logo() -> some View {
+    private func logoView() -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 11) {
+            HStack(spacing: 10) {
                 Text("PINK")
-                    .font(.system(size: 50, weight: .heavy))
+                    .font(.system(size: 45, weight: .heavy))
                     .italic()
                 flag
             }
             Text("OVERBOOST.")
-                .font(.system(size: 50, weight: .heavy))
+                .font(.system(size: 45, weight: .heavy))
                 .italic()
         }
         .foregroundColor(.white)
         .skew(-0.14)
-        .offset(x: 104, y: 352)
+        .offset(x: 118, y: 292)
     }
 
     private var flag: some View {
@@ -340,17 +297,17 @@ struct PinkDashboard: View {
                     ForEach(0..<4, id: \.self) { c in
                         Rectangle()
                             .fill((r + c) % 2 == 0 ? Color.white : Color.black)
-                            .frame(width: 9, height: 8)
+                            .frame(width: 8, height: 7)
                     }
                 }
             }
         }
-        .frame(width: 36, height: 24)
+        .frame(width: 33, height: 22)
     }
 
     // MARK: 菜单
 
-    private func menu(f: RedlineFrame) -> some View {
+    private func menuBlock(f: RedlineFrame) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
                 Image(systemName: "circle.circle.fill")
@@ -361,11 +318,11 @@ struct PinkDashboard: View {
                 Image(systemName: "play.fill")
                     .font(.system(size: 10))
             }
-            .foregroundColor(Color(red: 1.0, green: 0.14, blue: 0.22))
+            .foregroundColor(PN.red)
             .shadow(color: PN.red.opacity(0.7), radius: 8)
 
-            row("Time", rideText(f))
-            row("Trip", String(format: "%.1fkm", central.tripKm))
+            row("时间", rideText(f))
+            row("里程", String(format: "%.1fkm", central.tripKm))
         }
         .frame(width: 268, alignment: .leading)
         .offset(x: 420, y: 292)
@@ -373,11 +330,12 @@ struct PinkDashboard: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Text(label)
                     .font(.system(size: 15))
+                    .tracking(1)
                     .foregroundColor(.white.opacity(0.45))
-                    .frame(width: 86, alignment: .leading)
+                    .frame(width: 64, alignment: .leading)
                 Text(value)
                     .font(PN.num(24, .heavy))
                     .foregroundColor(.white)
@@ -393,116 +351,154 @@ struct PinkDashboard: View {
     }
 
     private func rideText(_ f: RedlineFrame) -> String {
-        let m = Int(f.ride) / 60
-        return "\(m / 60)h \(m % 60)min"
+        let total = Int(f.ride) / 60
+        return "\(total / 60)小时\(total % 60)分"
     }
 
-    // MARK: 功率
+    // MARK: 速度 + 电压 / 功率
 
-    private func powerBlock(f: RedlineFrame, w: CGFloat) -> some View {
-        VStack(spacing: 2) {
-            Text("\(Int(watts.rounded()))")
+    private func speedBlock(f: RedlineFrame) -> some View {
+        VStack(spacing: 0) {
+            Text("\(Int(speed.rounded()))")
                 .font(PN.num(96))
                 .italic()
                 .foregroundColor(.white)
-                .shadow(color: .white.opacity(0.30), radius: 14)
-            Text("W")
-                .font(.system(size: 18))
+                .shadow(color: .white.opacity(0.28), radius: 22)
+                .scaleEffect(1 + f.E * 0.05)
+
+            Text("km/h")
+                .font(.system(size: 20, weight: .bold))
                 .tracking(3)
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(.white.opacity(0.50))
+                .padding(.top, 2)
+
+            Rectangle()
+                .fill(LinearGradient(colors: [Color.clear,
+                                              Color.white.opacity(0.28),
+                                              Color.clear],
+                                     startPoint: .leading, endPoint: .trailing))
+                .frame(height: 1)
+                .padding(.vertical, 11)
+
+            HStack(spacing: 0) {
+                pair("电压", String(format: "%.1f", busV), "V")
+                pair("功率", "\(Int(watts.rounded()))", "W")
+            }
         }
-        .frame(width: 190)
-        .position(x: w / 2 + 339, y: 424)
+        .frame(width: 210)
+        .offset(x: 799, y: 252)
     }
 
-    // MARK: 胎压
+    private func pair(_ label: String, _ value: String, _ unit: String) -> some View {
+        VStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 12))
+                .tracking(1)
+                .foregroundColor(.white.opacity(0.45))
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value)
+                    .font(PN.num(30))
+                    .foregroundColor(.white)
+                Text(unit)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white.opacity(0.62))
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
 
-    private func tireBlock() -> some View {
-        HStack(spacing: 52) {
-            tire("F", bar: frontBar,
-                 temp: ctrlT == nil ? "--" : String(format: "%.0f", ctrlT!))
-            tire("R", bar: rearBar,
-                 temp: motorT == nil ? "--" : String(format: "%.0f", motorT!))
+    // MARK: 左下控制器
+
+    private func controllerBlock() -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 26) {
+                cell("电压", String(format: "%.1f", busV), "V")
+                cell("电流", String(format: "%.1f", busA), "A")
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 26) {
+                cell("控温", tempText(ctrlT), "°c")
+                cell("电机", tempText(motorT), "°c")
+                cell("转速", "\(rpm)", "")
+            }
         }
         .skew(-0.12)
-        .frame(width: 420, alignment: .leading)
-        .offset(x: 40, y: 618)
+        .offset(x: 44, y: 590)
     }
 
-    private func tire(_ tag: String, bar: Double, temp: String) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Text(tag)
-                .font(.system(size: 26, weight: .heavy))
-                .foregroundColor(.white)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text(String(format: "%.1f", bar))
-                        .font(PN.num(33))
-                        .foregroundColor(.white)
-                    Text("bar")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundColor(.white.opacity(0.72))
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text(temp)
-                        .font(PN.num(19, .regular))
-                    Text("°c")
-                        .font(.system(size: 12))
-                }
-                .foregroundColor(.white.opacity(0.60))
-            }
-        }
-    }
-
-    // MARK: 电量 + 车速
-
-    private func batteryBlock(f: RedlineFrame, w: CGFloat) -> some View {
-        HStack(spacing: 14) {
-            Text("\(soc)%")
-                .font(PN.num(44))
-                .foregroundColor(.white)
-
-            HStack(spacing: 3) {
-                ForEach(0..<20, id: \.self) { i in
-                    let on = i < Int((Double(20) * Double(soc) / 100).rounded())
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(on ? (i >= 17 ? PN.hot : .white) : Color.white.opacity(0.15))
-                        .frame(width: 9, height: 19)
-                        .shadow(color: on ? (i >= 17 ? PN.hot : .white).opacity(0.45) : .clear,
-                                radius: 4)
-                }
-            }
-
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("\(Int(speed.rounded()))")
-                    .font(PN.num(78))
-                    .italic()
-                    .foregroundColor(.white)
-                    .shadow(color: .white.opacity(0.26), radius: 12)
-                Text("km")
-                    .font(.system(size: 23, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.55))
-            }
-        }
-        .offset(x: w / 2 - 194, y: 614)
-    }
-
-    // MARK: ODO
-
-    private func odoBlock(w: CGFloat) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("ODO")
-                .font(.system(size: 33, weight: .bold))
+    private func cell(_ label: String, _ value: String, _ unit: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text(label)
+                .font(.system(size: 13))
+                .tracking(1)
                 .foregroundColor(.white.opacity(0.55))
-            Text("\(Int((odoKm + max(0, central.tripKm - lastTrip)).rounded()))")
-                .font(PN.num(33, .heavy))
+            Text(value)
+                .font(PN.num(33))
                 .foregroundColor(.white)
-            Text("km")
-                .font(.system(size: 21))
-                .foregroundColor(.white.opacity(0.75))
+            if !unit.isEmpty {
+                Text(unit)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white.opacity(0.60))
+            }
         }
-        .frame(width: 320, alignment: .trailing)
-        .offset(x: w - 34 - 320, y: 636)
+    }
+
+    // MARK: 底栏：电量 + 续航
+
+    private func batteryBlock() -> some View {
+        HStack(alignment: .bottom, spacing: 14) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("电量")
+                    .font(.system(size: 12))
+                    .tracking(2)
+                    .foregroundColor(.white.opacity(0.50))
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text("\(soc)")
+                        .font(PN.num(44))
+                        .foregroundColor(.white)
+                    Text("%")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+            }
+
+            segmentBar
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("续航")
+                    .font(.system(size: 12))
+                    .tracking(2)
+                    .foregroundColor(.white.opacity(0.50))
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(rangeKm.map { "\($0)" } ?? "--")
+                        .font(PN.num(62))
+                        .italic()
+                        .foregroundColor(.white)
+                        .shadow(color: .white.opacity(0.24), radius: 18)
+                    Text("km")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+            }
+        }
+        .offset(x: 556, y: 610)
+    }
+
+    private var segmentBar: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<20, id: \.self) { i in
+                let lit = i < litSegments
+                let hot = i >= 17
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(lit ? (hot ? PN.hot : Color.white) : Color.white.opacity(0.15))
+                    .frame(width: 9, height: 19)
+                    .shadow(color: lit ? (hot ? PN.hot : Color.white).opacity(0.45) : Color.clear,
+                            radius: 4)
+            }
+        }
+    }
+
+    private var litSegments: Int {
+        Int((20.0 * Double(soc) / 100.0).rounded())
     }
 }
 
@@ -567,7 +563,8 @@ private struct PinkArcCanvas: View {
             var redLine = Path()
             let r0 = arc.point(arc.redStart)
             let r1 = arc.point(min(1010, arc.width - 40))
-            let r2 = CGPoint(x: min(1170, arc.width - 30), y: arc.point(min(1170, arc.width - 30)).y + 94)
+            let r2 = CGPoint(x: min(1170, arc.width - 30),
+                             y: arc.point(min(1170, arc.width - 30)).y + 94)
             redLine.move(to: CGPoint(x: r0.x, y: r0.y + 18))
             redLine.addLine(to: CGPoint(x: r1.x, y: r1.y + 20))
             redLine.addCurve(to: r2,
@@ -591,7 +588,8 @@ private struct PinkArcCanvas: View {
             ctx.stroke(footR, with: .color(.white.opacity(0.5)), lineWidth: 2.4)
 
             // 彗星
-            let cx = min(max(arc.tickStart + CGFloat(vn) * (arc.tickEnd - arc.tickStart), arc.tickStart), arc.tickEnd)
+            let cx = min(max(arc.tickStart + CGFloat(vn) * (arc.tickEnd - arc.tickStart),
+                             arc.tickStart), arc.tickEnd)
             let cp = arc.point(cx)
             var comet = Path()
             comet.addEllipse(in: CGRect(x: cp.x - 4, y: cp.y - 10, width: 8, height: 8))
@@ -604,7 +602,7 @@ private struct PinkArcCanvas: View {
 
 // MARK: - 中央全息核心
 
-/// 参考图中间是立绘；这里换成一颗全息核心——转得越快、加速越猛，它越亮越大。
+/// 没设立绘时的替身：转得越快、加速越猛，它越亮越大。
 private struct PinkCoreCanvas: View {
     var vn: Double
     var E: Double
