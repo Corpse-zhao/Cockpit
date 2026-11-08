@@ -29,6 +29,9 @@ struct SettingsView: View {
 
     // 连接
     @AppStorage("scan_all_devices") private var scanAllDevices = false
+    @AppStorage("ctrl_auto_reconnect") private var ctrlAuto = true
+    /// 设置页的 BMS 蓝牙列表默认收起，不然一大串设备把下面的设置顶到很远
+    @AppStorage("bms_list_collapsed") private var bmsListCollapsed = true
     @AppStorage("last_transport") private var lastTransport = "未连接"
     @AppStorage("controller_label") private var controllerLabel = "未设置"
     @AppStorage("vehicle_label") private var vehicleLabel = ""
@@ -278,7 +281,19 @@ struct SettingsView: View {
 
     private var connectionSection: some View {
         Section {
+            Toggle("自动连接上次的控制器", isOn: $ctrlAuto)
             Toggle("扫描时显示所有蓝牙设备", isOn: $scanAllDevices)
+
+            if central.hasLastDevice {
+                LabeledContent("上次连接",
+                               value: UserDefaults.standard.string(forKey: CockpitCentral.lastNameKey) ?? "—")
+                Button(role: .destructive) {
+                    central.forgetLast()
+                } label: {
+                    Label("忘记这台控制器", systemImage: "trash")
+                        .font(.footnote)
+                }
+            }
 
             HStack {
                 Text("控制器")
@@ -356,7 +371,7 @@ struct SettingsView: View {
         } header: {
             Text("连接与显示")
         } footer: {
-            Text("控制器型号连上后从广播名自动识别（LBMC- 后面那串），也会把数据帧里出现的可打印字符串收集成候选。车型和控制器都可以手改，改过之后不再自动覆盖。小数位影响电压/电流/功率/温度/转把，速度保持整数。")
+            Text("控制器型号连上后从广播名自动识别（LBMC- 后面那串），也会把数据帧里出现的可打印字符串收集成候选。车型和控制器都可以手改，改过之后不再自动覆盖。小数位影响电压/电流/功率/温度/转把，速度保持整数。\n\n「自动连接上次的控制器」开着时，进 App 会先试着直连上一次那台（连不上再静默扫 15 秒等它出现），不用每次点扫描。手动点「断开」不会被自动连回来。")
         }
     }
 
@@ -455,33 +470,59 @@ struct SettingsView: View {
             }
 
             if !bms.devices.isEmpty {
-                Toggle("只显示保护板品牌（蚂蚁/极空/嘉佰达/彦阳…）", isOn: $bmsOnlyBoards)
-                    .font(.subheadline)
-                ForEach(bmsOnlyBoards ? bms.devices.filter { $0.likely } : bms.devices) { d in
-                    Button {
-                        bms.connect(d)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: d.likely ? "battery.100.bolt" : "dot.radiowaves.left.and.right")
-                                .font(.footnote)
-                                .foregroundColor(d.likely ? .green : .secondary)
-                            Text(d.name)
-                                .lineLimit(1)
-                            if d.likely {
-                                Text(d.brand ?? "疑似 BMS")
-                                    .font(.caption2)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(Capsule().fill(Color.green.opacity(0.18)))
-                                    .foregroundColor(.green)
-                            }
-                            Spacer()
-                            Text("\(d.rssi)")
-                                .font(.caption.monospacedDigit())
-                                .foregroundColor(.secondary)
-                        }
+                // 默认收起：扫描十来个设备时，展开的列表能把下面的设置顶出去好几屏
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { bmsListCollapsed.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: bmsListCollapsed
+                              ? "chevron.right" : "chevron.down")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text("附近的蓝牙设备")
+                        Text("\(bms.devices.count)")
+                            .font(.caption2.monospacedDigit())
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.secondary.opacity(0.18)))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(bmsListCollapsed ? "展开" : "收起")
+                            .font(.caption)
+                            .foregroundColor(.accentColor)
                     }
-                    .buttonStyle(.plain)
+                }
+                .buttonStyle(.plain)
+
+                if !bmsListCollapsed {
+                    Toggle("只显示保护板品牌（蚂蚁/极空/嘉佰达/彦阳…）", isOn: $bmsOnlyBoards)
+                        .font(.subheadline)
+                    ForEach(bmsOnlyBoards ? bms.devices.filter { $0.likely } : bms.devices) { d in
+                        Button {
+                            bms.connect(d)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: d.likely ? "battery.100.bolt" : "dot.radiowaves.left.and.right")
+                                    .font(.footnote)
+                                    .foregroundColor(d.likely ? .green : .secondary)
+                                Text(d.name)
+                                    .lineLimit(1)
+                                if d.likely {
+                                    Text(d.brand ?? "疑似 BMS")
+                                        .font(.caption2)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(Color.green.opacity(0.18)))
+                                        .foregroundColor(.green)
+                                }
+                                Spacer()
+                                Text("\(d.rssi)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
 

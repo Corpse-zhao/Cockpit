@@ -284,3 +284,261 @@ struct BmsDetailView: View {
                 .stroke(Color.white.opacity(0.10), lineWidth: 0.8))
     }
 }
+
+// MARK: - 电池连接
+
+/// 仪表页左下那条「电池未连接」虚线点进来就是这个。
+/// 以前得绕去「设置 → 电池」翻半天，现在原地就能搜、能连、能断开。
+struct BmsConnectSheet: View {
+    @EnvironmentObject var bms: BmsCentral
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("bms_only_boards") private var onlyBoards = true
+
+    private var green: Color { Color(red: 0.2, green: 0.95, blue: 0.55) }
+    private var pink: Color { Color(red: 1.0, green: 0.36, blue: 0.66) }
+
+    private var list: [BmsCentral.Device] {
+        onlyBoards ? bms.devices.filter { $0.likely } : bms.devices
+    }
+
+    private var tone: Color {
+        switch bms.phase {
+        case .online, .connected: return green
+        case .connecting: return .yellow
+        case .scanning: return .orange
+        case .idle: return Color.white.opacity(0.40)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 0.5)
+            HStack(alignment: .top, spacing: 12) {
+                leftColumn.frame(width: 208)
+                rightColumn.frame(maxWidth: .infinity)
+            }
+            .padding(12)
+        }
+        .background(Color(red: 0.045, green: 0.045, blue: 0.055).ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .onAppear {
+            guard bms.phase == .idle else { return }
+            bms.beginAutoConnect()
+            // 等 1 秒：自动连接要是已经直连上了，就别再抢着扫描
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak bms] in
+                guard let bms, bms.phase == .idle, bms.devices.isEmpty else { return }
+                bms.startScan()
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "battery.100.bolt")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(green)
+            Text("连接电池 BMS")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+            HStack(spacing: 5) {
+                Circle().fill(tone).frame(width: 6, height: 6)
+                Text(bms.phase.rawValue)
+                    .font(.system(size: 11))
+                    .foregroundColor(tone)
+            }
+            Spacer()
+            Button("完成") { dismiss() }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(pink)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: 左：状态 + 操作
+
+    private var leftColumn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(bms.connectedName ?? "未连接")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                if let t = bms.telemetry {
+                    Text(String(format: "%.2f V · %+.2f A · %d%%", t.packVoltage, t.current, t.soc))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.65))
+                } else {
+                    Text(bms.gattInfo ?? "还没收到数据")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.45))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let err = bms.lastError {
+                    Text(err)
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(panel)
+
+            if bms.phase == .scanning {
+                actionButton("停止扫描", "stop.circle", .white.opacity(0.75)) { bms.stopScan() }
+            } else {
+                actionButton("搜索电池", "dot.radiowaves.left.and.right", green) { bms.startScan() }
+            }
+
+            if bms.phase == .online || bms.phase == .connected || bms.phase == .connecting {
+                actionButton("断开", "xmark.circle", Color(red: 1, green: 0.36, blue: 0.36)) {
+                    bms.disconnect()
+                }
+            } else if bms.hasLastDevice {
+                actionButton("重连上次", "arrow.clockwise", .white.opacity(0.75)) {
+                    bms.reconnectLast()
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            Text("只列保护板品牌：蚂蚁 / 极空 / 嘉佰达 / 彦阳 / 达锂…")
+                .font(.system(size: 8.5))
+                .foregroundColor(.white.opacity(0.28))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: 右：设备列表
+
+    private var rightColumn: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Text("附近设备")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.75))
+                Text("\(list.count)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.45))
+                Spacer()
+                Button {
+                    onlyBoards.toggle()
+                } label: {
+                    Text(onlyBoards ? "仅保护板" : "全部蓝牙")
+                        .font(.system(size: 9))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(onlyBoards ? green.opacity(0.18)
+                                                              : Color.white.opacity(0.10)))
+                        .foregroundColor(onlyBoards ? green : .white.opacity(0.70))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if list.isEmpty {
+                VStack(spacing: 6) {
+                    Spacer(minLength: 0)
+                    Image(systemName: bms.phase == .scanning
+                          ? "dot.radiowaves.left.and.right" : "battery.0")
+                        .font(.system(size: 20, weight: .light))
+                        .foregroundColor(.white.opacity(0.25))
+                    Text(bms.phase == .scanning
+                         ? "正在搜索保护板…"
+                         : (bms.devices.isEmpty
+                            ? "点左边「搜索电池」，或者直接在车上通电等它出现"
+                            : "搜到 \(bms.devices.count) 个蓝牙，但没有保护板名字"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.40))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 5) {
+                        ForEach(list) { d in
+                            Button {
+                                bms.connect(d)
+                            } label: {
+                                row(d)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxHeight: .infinity)
+        .background(panel)
+    }
+
+    private func row(_ d: BmsCentral.Device) -> some View {
+        let isCurrent = bms.connectedName?.uppercased() == d.name.uppercased()
+        return HStack(spacing: 8) {
+            Image(systemName: d.likely ? "battery.100.bolt" : "dot.radiowaves.left.and.right")
+                .font(.system(size: 11))
+                .foregroundColor(d.likely ? green : .white.opacity(0.45))
+            Text(d.name)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundColor(.white.opacity(0.90))
+                .lineLimit(1)
+            if let b = d.brand {
+                Text(b)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(green.opacity(0.18)))
+                    .foregroundColor(green)
+            }
+            Spacer(minLength: 4)
+            if isCurrent {
+                Text("已连")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(green)
+            }
+            Text("\(d.rssi)")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.white.opacity(0.40))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundColor(.white.opacity(0.22))
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.055)))
+    }
+
+    private func actionButton(_ title: String, _ icon: String,
+                              _ color: Color, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+                Text(title).font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 9).fill(color.opacity(0.14)))
+            .overlay(RoundedRectangle(cornerRadius: 9)
+                .stroke(color.opacity(0.28), lineWidth: 0.8))
+            .foregroundColor(color)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var panel: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color.white.opacity(0.05))
+            .overlay(RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.09), lineWidth: 0.8))
+    }
+}

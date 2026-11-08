@@ -95,6 +95,11 @@ final class CockpitCentral: NSObject, ObservableObject {
     static let defaultWheelCircMM: Double = 1466
     /// 设置项：扫描时是否显示全部蓝牙设备（默认只显示 LBMC）
     static let showAllDevicesKey = "scan_all_devices"
+    /// 上次连过的控制器，下次开机直接连（跟电池那套一个思路）
+    static let lastDeviceKey = "ctrl_last_device"
+    static let lastNameKey = "ctrl_last_name"
+    /// 设置项：自动连接上次的控制器，默认开
+    static let autoConnectKey = "ctrl_auto_reconnect"
 
     private var manager: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -110,11 +115,16 @@ final class CockpitCentral: NSObject, ObservableObject {
     /// 未知设备自动探测：待枚举的服务数与候选通道
     private var pendingServiceCount = 0
     private var autoCandidates: [(CBUUID, CBCharacteristic, CBCharacteristic)] = []
+    /// 自动连接：等待出现的上次那台控制器名字（大写）
+    private var autoConnectName: String?
+    /// 用户手动点了「断开」之后，就别再自动连回来，免得甩不掉
+    private var suppressAutoConnect = false
 
     // MARK: - 对外操作
 
     func startScan() {
         reconnectAttempts = 0
+        suppressAutoConnect = false
         devices.removeAll()
         phase = .scanning
         if manager == nil {
@@ -122,6 +132,53 @@ final class CockpitCentral: NSObject, ObservableObject {
         } else if manager?.state == .poweredOn {
             manager?.scanForPeripherals(withServices: nil, options: nil)
         }
+    }
+
+    /// 启动 / 回到扫描页时调用：能直连上次那台就直连，直连不了就静默扫一轮，
+    /// 扫到同名设备自动连——跟电池那边的 beginAutoConnect 一个套路。
+    func beginAutoConnect() {
+        guard phase == .idle, !suppressAutoConnect else { return }
+        let auto = UserDefaults.standard.object(forKey: CockpitCentral.autoConnectKey) as? Bool ?? true
+        guard auto else { return }
+
+        if manager == nil { manager = CBCentralManager(delegate: self, queue: nil) }
+
+        // 1) 系统还认得上一次那台 → 直接连，不用扫
+        if let raw = UserDefaults.standard.string(forKey: CockpitCentral.lastDeviceKey),
+           let uuid = UUID(uuidString: raw),
+           let p = manager?.retrievePeripherals(withIdentifiers: [uuid]).first {
+            log("自动连接上次的控制器 \(p.name ?? "")")
+            phase = .connecting
+            peripheral = p
+            p.delegate = self
+            manager?.connect(p, options: nil)
+            return
+        }
+
+        // 2) 认不得（换了手机、系统清了缓存）→ 静默扫，按名字等它出现
+        guard let last = UserDefaults.standard.string(forKey: CockpitCentral.lastNameKey),
+              !last.isEmpty else { return }
+        autoConnectName = last.uppercased()
+        startScan()
+        log("正在等上次那台 \(last) 出现…")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            guard let self else { return }
+            self.autoConnectName = nil
+            if self.phase == .scanning { self.stopScan() }
+        }
+    }
+
+    var hasLastDevice: Bool {
+        guard let raw = UserDefaults.standard.string(forKey: CockpitCentral.lastDeviceKey) else { return false }
+        return UUID(uuidString: raw) != nil
+    }
+
+    /// 忘掉这台控制器：下次不再自动连
+    func forgetLast() {
+        UserDefaults.standard.removeObject(forKey: CockpitCentral.lastDeviceKey)
+        UserDefaults.standard.removeObject(forKey: CockpitCentral.lastNameKey)
+        suppressAutoConnect = true
+        disconnect()
     }
 
     func stopScan() {
@@ -135,6 +192,10 @@ final class CockpitCentral: NSObject, ObservableObject {
             log("未找到设备，请重新扫描")
             return
         }
+        // 记住这台，下次开机自动连
+        UserDefaults.standard.set(device.id.uuidString, forKey: CockpitCentral.lastDeviceKey)
+        UserDefaults.standard.set(device.name, forKey: CockpitCentral.lastNameKey)
+        suppressAutoConnect = false
         phase = .connecting
         peripheral = p
         p.delegate = self
@@ -143,6 +204,8 @@ final class CockpitCentral: NSObject, ObservableObject {
 
     func disconnect() {
         reconnectAttempts = 99
+        // 手动断开就是不想连了，别再被自动连接拽回来
+        suppressAutoConnect = true
         if let p = peripheral { manager?.cancelPeripheralConnection(p) }
     }
 
@@ -342,6 +405,25 @@ extension CockpitCentral: CBCentralManagerDelegate {
         let name = peripheral.name
             ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
             ?? "未知设备"
+
+        // 自动连接：扫到上次那台（广播名可能被截断，两边互相前缀都算同一台）
+        if let want = autoConnectName {
+            let cur = name.uppercased()
+            if cur == want || cur.hasPrefix(want) || want.hasPrefix(cur) {
+                autoConnectName = nil
+                central.stopScan()
+                UserDefaults.standard.set(peripheral.identifier.uuidString,
+                                          forKey: CockpitCentral.lastDeviceKey)
+                UserDefaults.standard.set(name, forKey: CockpitCentral.lastNameKey)
+                phase = .connecting
+                self.peripheral = peripheral
+                peripheral.delegate = self
+                central.connect(peripheral, options: nil)
+                log("自动连接 \(name)")
+                return
+            }
+        }
+
         let isKnown = ControllerIdentifier.isKnownName(name)
         let showAll = UserDefaults.standard.bool(forKey: CockpitCentral.showAllDevicesKey)
         guard isKnown || showAll else { return }
@@ -359,6 +441,13 @@ extension CockpitCentral: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         reconnectAttempts = 0
         connectedName = peripheral.name
+        // 连上了就记住，下次开机自动连这一台
+        UserDefaults.standard.set(peripheral.identifier.uuidString,
+                                  forKey: CockpitCentral.lastDeviceKey)
+        if let n = peripheral.name, !n.isEmpty {
+            UserDefaults.standard.set(n, forKey: CockpitCentral.lastNameKey)
+        }
+        autoConnectName = nil
         driver.reset()
         transportLabel = nil
         gattSummary = nil

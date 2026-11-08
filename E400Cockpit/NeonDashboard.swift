@@ -322,6 +322,7 @@ struct NeonStatusPanel: View {
     @AppStorage("theme_id") private var themeID = ThemePreset.pink.rawValue
 
     @State private var showBmsDetail = false
+    @State private var showBmsConnect = false
 
     private var theme: ThemePreset { ThemeStore.preset(for: themeID) }
 
@@ -357,13 +358,16 @@ struct NeonStatusPanel: View {
         .sheet(isPresented: $showBmsDetail) {
             BmsDetailView().environmentObject(bms)
         }
+        .sheet(isPresented: $showBmsConnect) {
+            BmsConnectSheet().environmentObject(bms)
+        }
     }
 
     // MARK: 电池未连接
 
     private var bmsOfflineRow: some View {
         Button {
-            showBmsDetail = true
+            showBmsConnect = true
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "battery.0")
@@ -372,7 +376,7 @@ struct NeonStatusPanel: View {
                 Text("电池未连接")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.white.opacity(0.50))
-                Text(bms.phase == .scanning ? "扫描中…" : "设置 → 电池（蚂蚁板 BMS）")
+                Text(bms.phase == .scanning ? "扫描中…" : "点这里连接 BMS")
                     .font(.system(size: 9))
                     .foregroundColor(.white.opacity(0.30))
                     .lineLimit(1)

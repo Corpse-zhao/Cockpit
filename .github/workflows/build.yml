@@ -60,32 +60,33 @@ jobs:
           /usr/bin/codesign -dv "$APP" 2>&1 || true
           rm -rf Payload && mkdir -p Payload
           cp -R "$APP" Payload/
-          zip -qry "E400Cockpit-v${V}.ipa" Payload
-          ls -lh "E400Cockpit-v${V}.ipa"
-          unzip -l "E400Cockpit-v${V}.ipa" | head -20
+          zip -qry "Cockpit-v${V}.ipa" Payload
+          ls -lh "Cockpit-v${V}.ipa"
+          unzip -l "Cockpit-v${V}.ipa" | head -20
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: E400Cockpit-ipa
-          path: E400Cockpit-v${{ steps.ver.outputs.version }}.ipa
+          name: Cockpit-ipa
+          path: Cockpit-v${{ steps.ver.outputs.version }}.ipa
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
-          name: E400Cockpit v${{ steps.ver.outputs.version }}
+          name: Cockpit v${{ steps.ver.outputs.version }}
           body: |
             凌博 E400 蓝牙仪表 v${{ steps.ver.outputs.version }}
 
-            - 开机自检动画改为完整一轮回：0→9 → 9→0 → 0→9 → 9→0
-            - 仪表页右下角新增「帧长」指示（绿=字段齐全 / 黄 / 橙=基本量）
-            - 数据台新增逐字节帧结构视图，标出每个已知字段的偏移
-            - 挡位 / 转把支持手动偏移覆盖 + 短帧 @24 回退开关
-            - 一键「复制协议诊断」，可直接发给开发者定位
+            - 左侧面板四层：上两层控制器、下两层电池（蚂蚁板 BMS）
+            - 第一排：母线电压 / 母线电流 / 功率(W) / 控制器温度
+            - 第二排：相电流（设置里可换成电机温度）/ 转速 / 定位精度 / 故障码
+            - 电池：电量 / 总压 / 电流 / 功率 · 压差 / 温度 / 剩余容量 / SOH
+            - BMS 记住跑通的写入通道，重连免摸索；断流先换通道再断链重建
+            - 壁纸支持「铺满」与「完整显示（模糊边填充）」两种填充方式
 
             ad-hoc 签名，越狱设备经 TrollStore / AppSync / Sideloadly 安装。
-          files: E400Cockpit-v${{ steps.ver.outputs.version }}.ipa
+          files: Cockpit-v${{ steps.ver.outputs.version }}.ipa
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

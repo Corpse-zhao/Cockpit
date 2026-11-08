@@ -44,7 +44,11 @@ struct ScanView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .onAppear { bms.beginAutoConnect() }
+        .onAppear {
+            // 两条链路各自动连各的：控制器先试上次那台，电池也一样
+            central.beginAutoConnect()
+            bms.beginAutoConnect()
+        }
     }
 
     // MARK: 左：入口
