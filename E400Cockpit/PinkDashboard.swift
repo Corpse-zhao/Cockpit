@@ -101,12 +101,12 @@ struct PinkDashboard: View {
         .onAppear {
             withAnimation(.easeOut(duration: 0.3)) { appear = true }
             bms.beginAutoConnect()
-            portrait = PortraitStore.image
+            portrait = PortraitStore.image ?? UIImage(named: "portrait_default")
             weather.start()
         }
         .onDisappear { weather.stop() }
         .onChange(of: portraitVersion) { _ in
-            portrait = PortraitStore.image
+            portrait = PortraitStore.image ?? UIImage(named: "portrait_default")
         }
     }
 
@@ -248,10 +248,11 @@ struct PinkDashboard: View {
             Image(uiImage: img)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 340, height: 400, alignment: .bottom)
-                .shadow(color: PN.pink.opacity(0.50), radius: 28)
-                .offset(x: 702 - 170,
-                        y: 230 - CGFloat(sin(f.t * 1.6)) * 4 - CGFloat(f.E) * 8)
+                .frame(width: 300, height: 360)
+                .shadow(color: PN.pink.opacity(0.30), radius: 26)
+                .opacity(0.94)
+                .offset(x: 550,
+                        y: 282 - CGFloat(sin(f.t * 1.6)) * 2 - CGFloat(f.E) * 5)
         } else {
             PinkCoreCanvas(vn: f.vn, E: f.E, t: f.t)
                 .frame(width: 320, height: 320)
@@ -334,11 +335,13 @@ struct PinkDashboard: View {
                 Text(label)
                     .font(.system(size: 15))
                     .tracking(1)
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.white.opacity(0.55))
+                    .shadow(color: .black.opacity(0.95), radius: 4, y: 1)
                     .frame(width: 64, alignment: .leading)
                 Text(value)
                     .font(PN.num(24, .heavy))
                     .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.95), radius: 5, y: 1)
                 Spacer(minLength: 0)
             }
             .padding(.top, 15)
@@ -363,7 +366,7 @@ struct PinkDashboard: View {
                 .font(PN.num(96))
                 .italic()
                 .foregroundColor(.white)
-                .shadow(color: .white.opacity(0.28), radius: 22)
+                .shadow(color: .black.opacity(0.80), radius: 10, y: 2)
                 .scaleEffect(1 + f.E * 0.05)
 
             Text("km/h")
@@ -394,11 +397,13 @@ struct PinkDashboard: View {
             Text(label)
                 .font(.system(size: 12))
                 .tracking(1)
-                .foregroundColor(.white.opacity(0.45))
+                .foregroundColor(.white.opacity(0.66))
+                .shadow(color: .black.opacity(0.95), radius: 4, y: 1)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
                     .font(PN.num(30))
                     .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.90), radius: 5, y: 1)
                 Text(unit)
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white.opacity(0.62))
