@@ -75,6 +75,11 @@ final class BmsCentral: NSObject, ObservableObject {
     /// 最近收到的原始通知字节（不管能不能解析都记下来）——不通时全靠它定位
     @Published var lastRX = ""
     @Published var rxTotal = 0
+    /// 收到多少条通知 / 最近几帧的形状（功能码·字节数）。
+    /// 条数一直涨、解析成功数不涨，就说明板子在回、但我们拼不出来——一眼能分清是断流还是解析不了。
+    @Published var rxCount = 0
+    @Published var rxShape = ""
+    private var shapeQueue: [String] = []
     /// 实际选中的服务/特征值，排查连不上、没数据时第一眼看这个
     @Published var gattInfo: String?
 
@@ -116,6 +121,10 @@ final class BmsCentral: NSObject, ObservableObject {
     private var pollTimer: Timer?
     /// 带响应写出去后，等回音期间不再追写
     private var awaitingReply = false
+    /// 发出去的那一帧还没等到应答的时间点。应答到了就清空——下一帧立刻可以发。
+    /// 这是解决「空转时数据不动」的关键：模块把一帧拆成七八个通知慢慢吐，
+    /// 固定 400ms 一追问就会把上一帧截断，CRC 永远过不了，于是只停留在连上时那第一帧。
+    private var pendingSince: Date?
     private var lastWriteAt = Date.distantPast
     private var lastProbeAt = Date.distantPast
     /// 断线自动重连
@@ -287,6 +296,10 @@ final class BmsCentral: NSObject, ObservableObject {
         staleHits = 0
         lastStaleAt = .distantPast
         awaitingReply = false
+        pendingSince = nil
+        rxCount = 0
+        rxShape = ""
+        shapeQueue = []
         notifyCandidates = []
         writeCandidates = []
         parser.reset()
@@ -358,6 +371,7 @@ final class BmsCentral: NSObject, ObservableObject {
             lastStaleAt = Date()
             staleHits += 1
             awaitingReply = false
+            pendingSince = nil
             if staleHits <= 2, writeCandidates.count > 1 {
                 probeIndex = (probeIndex + 1) % writeCandidates.count
                 writeChar = writeCandidates[probeIndex]
@@ -371,8 +385,10 @@ final class BmsCentral: NSObject, ObservableObject {
             return
         }
 
-        // 上一次请求还没回音就先别追着写，避免把模块问崩（有的板子一忙就掉线）
-        if awaitingReply, Date().timeIntervalSince(lastWriteAt) < 0.7 { return }
+        // 上一次请求出去还没等到应答就先别追着写。1.2 秒是给模块吐完整一帧的余量：
+        // 蚂蚁板一帧 152 字节，MTU 20 时要拆成八条通知，固定 400ms 催一次会把帧截断，
+        // 截断帧 CRC 必错，于是永远停在连上时的第一帧。等应答再发，节奏自然跟着模块走。
+        if let sentAt = pendingSince, Date().timeIntervalSince(sentAt) < 1.2 { return }
 
         // 频率改了就地重建定时器
         if abs((pollTimer?.timeInterval ?? 0) - pollInterval) > 0.01 {
@@ -398,6 +414,7 @@ final class BmsCentral: NSObject, ObservableObject {
         }
         awaitingReply = (type == .withResponse)
         lastWriteAt = Date()
+        pendingSince = Date()
         p.writeValue(Data(AntBmsParser.statusRequest), for: w, type: type)
     }
 
@@ -649,11 +666,19 @@ extension BmsCentral: CBPeripheralDelegate {
         // 不管能不能解析，先把收到的原始字节记下来——不通时全靠这个定位
         let bytes = [UInt8](data)
         rxTotal += bytes.count
+        rxCount += 1
         lastRX = bytes.prefix(48).map { String(format: "%02X", $0) }.joined(separator: " ")
+        let shape = bytes.count > 2
+            ? String(format: "%02X·%d", bytes[2], bytes.count)
+            : "\(bytes.count)B"
+        shapeQueue.append(shape)
+        if shapeQueue.count > 3 { shapeQueue.removeFirst(shapeQueue.count - 3) }
+        rxShape = shapeQueue.joined(separator: " ")
 
         if let t = parser.feed(bytes) {
             gotFrame = true
             awaitingReply = false
+            pendingSince = nil
             staleHits = 0
             lastStaleAt = .distantPast
             lastFrameAt = Date()

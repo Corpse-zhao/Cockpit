@@ -60,7 +60,7 @@ struct BmsFrameCard: View {
                     item("SOC", "\(bms.telemetry?.soc ?? 0)%")
                     item("压差", "\(Int(((bms.telemetry?.deltaV ?? 0) * 1000).rounded())) mV")
                     Spacer()
-                    Text("已收 \(bms.frameCount) 帧")
+                    Text("收 \(bms.rxCount) 条 / 解析 \(bms.frameCount) 帧")
                         .font(.system(size: 9))
                         .foregroundColor(.white.opacity(0.45))
                 }
@@ -334,16 +334,23 @@ struct BmsDetailView: View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             let age = Date().timeIntervalSince(bms.lastFrameAt)
             let stale = age > 3
-            HStack(spacing: 14) {
-                info("刷新", "\(bms.frameCount) 帧")
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("最后一帧").font(.system(size: 9)).foregroundColor(.white.opacity(0.45))
-                    Text(ageText(age))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(stale ? .orange : .white)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 14) {
+                    info("收到", "\(bms.rxCount) 条")
+                    info("解析", "\(bms.frameCount) 帧")
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("最后一帧").font(.system(size: 9)).foregroundColor(.white.opacity(0.45))
+                        Text(ageText(age))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(stale ? .orange : .white)
+                    }
+                    Spacer()
                 }
-                info("帧长", "\(bms.lastFrame.count) 字节")
-                Spacer()
+                HStack(spacing: 14) {
+                    info("最近帧", bms.rxShape.isEmpty ? "—" : bms.rxShape)
+                    info("帧长", "\(bms.lastFrame.count) 字节")
+                    Spacer()
+                }
             }
         }
         .padding(12)
