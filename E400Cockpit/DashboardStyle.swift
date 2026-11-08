@@ -3,36 +3,37 @@ import SwiftUI
 
 // MARK: - 仪表样式
 
-/// 五套仪表骨架。连接逻辑（CockpitCentral / BmsCentral）与 UI 完全解耦，
+/// 两套仪表骨架。连接逻辑（CockpitCentral / BmsCentral）与 UI 完全解耦，
 /// 所以换样式只是换一个 View，不影响任何蓝牙行为。
+///
+/// 0.5.0 起收敛成两套：霓虹（圆盘 + 进度弧，默认）与红黑（斜梯 + 巨字，全屏特效）。
+/// 赛道 / 液态 / 示波 / 轨道已经删掉——同一份数据做四套近似画法，维护成本高、
+/// 实际只会用一套，不如把两套打磨到位。
 enum DashboardStyle: String, CaseIterable, Identifiable {
     case neon
-    case race
-    case liquid
-    case scope
-    case orbit
+    case redline
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .neon:   return "霓虹"
-        case .race:   return "赛道"
-        case .liquid: return "液态"
-        case .scope:  return "示波"
-        case .orbit:  return "轨道"
+        case .neon:    return "霓虹"
+        case .redline: return "红黑"
         }
     }
 
     /// 设置里样式卡片下面那行小字
     var caption: String {
         switch self {
-        case .neon:   return "圆盘表 · 发光进度弧"
-        case .race:   return "斜切色块 · 速度横条"
-        case .liquid: return "液面就是车速"
-        case .scope:  return "车速画成波形"
-        case .orbit:  return "一颗星按车速公转"
+        case .neon:    return "圆盘表 · 发光进度弧"
+        case .redline: return "斜梯 + 巨字 · 加速整屏冲击"
         }
+    }
+
+    /// 旧版本存下来的样式名（race / liquid / scope / orbit）读出来会失败，
+    /// 统一退回霓虹，不至于开机白屏。
+    static func stored(_ raw: String) -> DashboardStyle {
+        DashboardStyle(rawValue: raw) ?? .neon
     }
 }
 
@@ -45,17 +46,14 @@ struct DashboardRoot: View {
     @AppStorage("dashboard_style") private var styleRaw = DashboardStyle.neon.rawValue
 
     var body: some View {
-        switch DashboardStyle(rawValue: styleRaw) ?? .neon {
-        case .neon:   NeonDashboard()
-        case .race:   RaceDashboard()
-        case .liquid: LiquidDashboard()
-        case .scope:  ScopeDashboard()
-        case .orbit:  OrbitDashboard()
+        switch DashboardStyle.stored(styleRaw) {
+        case .neon:    NeonDashboard()
+        case .redline: RedlineDashboard()
         }
     }
 }
 
-// MARK: - 一份数据，五种画法
+// MARK: - 一份数据，两种画法
 
 /// 把两个 Central 的实时数据摘成纯值。
 /// 各样式自己决定怎么排版、用什么精度，这里只做搬运，不做字符串拼装。
