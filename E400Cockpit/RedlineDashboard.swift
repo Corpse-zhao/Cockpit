@@ -70,7 +70,7 @@ final class RedlineEngine {
 
     func step(at date: Date, speed: Double, maxSpeed: Double) -> RedlineFrame {
         let t = date.timeIntervalSinceReferenceDate
-        let raw = lastTime.map { t - $0 } ?? (1.0 / 60.0)
+        let raw = lastTime.map { t - $0.timeIntervalSinceReferenceDate } ?? (1.0 / 60.0)
         let dt = min(max(raw, 0.0), 0.1)
 
         // 同一帧里 body 可能被算好几次（数据刷新也会触发重算）。
@@ -224,8 +224,7 @@ struct RedlineDashboard: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
-        .background(Color.black)
-        .ignoresSafeArea()
+        .background(Color.black.ignoresSafeArea())
         .opacity(appear ? 1 : 0)
         .onAppear {
             withAnimation(.easeOut(duration: 0.30)) { appear = true }
