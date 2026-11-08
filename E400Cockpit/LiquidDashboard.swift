@@ -42,8 +42,11 @@ struct LiquidDashboard: View {
                         }
                         .font(.system(size: 8, design: .monospaced))
                         .foregroundColor(.white.opacity(0.30))
+                        .frame(maxHeight: .infinity)
                         .padding(.vertical, 2)
                     }
+                    // 罐子别拉成细长条：高度封顶，宽高比保持在 1:2 左右
+                    .frame(maxHeight: 212)
 
                     VStack(alignment: .leading, spacing: 0) {
                         Text(Fmt.speed(d.speed))
