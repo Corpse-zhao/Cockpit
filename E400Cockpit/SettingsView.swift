@@ -62,6 +62,8 @@ struct SettingsView: View {
 
     @State private var showAdvanced = false
     @State private var showFieldOffsets = false
+    /// 关于 → 使用教程
+    @State private var showTutorial = false
     @State private var activeSheet: ActiveSheet?
 
     /// 同一个视图上挂多个 .sheet 在 iOS 16 会互相顶掉，统一走一个 item 枚举
@@ -168,6 +170,9 @@ struct SettingsView: View {
                 BmsDetailView()
                     .environmentObject(bms)
             }
+        }
+        .fullScreenCover(isPresented: $showTutorial) {
+            TutorialView()
         }
     }
 
@@ -1020,6 +1025,11 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
+            Button {
+                showTutorial = true
+            } label: {
+                Label("使用教程", systemImage: "book")
+            }
             LabeledContent("名称", value: AppInfo.name)
             LabeledContent("版本", value: AppInfo.versionText)
             LabeledContent("协议", value: "凌博 AA55 / FFF0·FFF1·FFF2")
