@@ -60,7 +60,7 @@ struct PinkDashboard: View {
     @State private var portrait: UIImage?
 
     var body: some View {
-        FullBleedCanvas { w, _ in
+        FullBleedCanvas(backdrop: { w in backdrop(w: w) }) { w, _ in
             let arc = PinkArc(width: w)
             // 1280 宽的版面在 2.17:1 的横屏上会被拉宽到 1700+，
             // 中间那组（立绘 / 车速 / 电量）必须跟着画布走，
@@ -68,9 +68,6 @@ struct PinkDashboard: View {
             let dx = max(0, (w - 1280) / 2)
 
             ZStack(alignment: .topLeading) {
-                Color.black
-                backdrop(w: w)
-
                 TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
                     let f = engine.step(at: ctx.date, speed: speed, maxSpeed: maxSpeed)
 

@@ -14,6 +14,9 @@ struct E400CockpitApp: App {
             TabView {
                 DashboardView()
                     .tabItem { Label("仪表", systemImage: "speedometer") }
+                    // 仪表背景已经画到屏幕最底边，底栏再糊一层材质就成了
+                    // 「黑条压在画面上」，反而不像全屏
+                    .toolbarBackground(.hidden, for: .tabBar)
                 ConsoleView()
                     .tabItem { Label("数据台", systemImage: "terminal") }
                 SettingsView()

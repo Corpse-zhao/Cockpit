@@ -62,25 +62,22 @@ struct DashboardRoot: View {
 
 /// 1280×720 设计稿「铺满」容器的唯一正确姿势。
 ///
-/// 之前每个仪表都写了一遍 `s = min(h/720, w/1280)` + `.scaleEffect(s)`，
-/// 结果真机上一整块内容只占屏幕中间、左右各留一条黑边——原因是三件事叠在一起：
-/// 1. `.scaleEffect` 只改「画出来」的大小，不改布局大小。宽 1456 的画布缩到 0.54，
-///    在布局里仍然算 1456 宽，父视图按 1456 排版，缩放后再以**中心**为锚缩回去，
-///    整块内容就被推到右下方，左边留黑；
-/// 2. 画布 `w` 大于容器，ZStack 跟着变大，再被外层 `.frame(容器)` 一居中，又偏一次；
-/// 3. 横屏时左右还有一条安全区，没人去吃掉它。
+/// 两件事以前一直是错的：
+/// 1. `.scaleEffect` 只改「画出来」的大小、不改布局大小，而它的锚点默认在**中心**。
+///    画布比容器宽、缩放后整块内容就往右下飘，外面再 `.frame(容器)` 一居中，又偏一次。
+/// 2. 背景是跟内容一起按安全区排的。横屏底下有标签栏 + Home 条约 50pt，
+///    于是最下面露出一条纯黑，整块画面看起来像一张悬在屏幕中间的黑卡片——这就是
+///    「没铺满全屏」的真正观感来源。
 ///
-/// 这里把三件事一次解决：缩放只按高度算、宽度反推（永远够宽）、锚点钉在左上角、
-/// 最外面再套一个刚好等于容器的 frame 并裁掉溢出。
-struct FullBleedCanvas<Content: View>: View {
+/// 所以这里拆成两层：背景单独按**整块屏幕**铺（连标签栏后面都画到），
+/// 内容仍旧按安全区排版（标题栏、标签栏都不会压到数据），缩放锚点钉在左上角。
+struct FullBleedCanvas<Backdrop: View, Content: View>: View {
     var design: CGSize = CGSize(width: 1280, height: 720)
+    @ViewBuilder var backdrop: (_ canvasWidth: CGFloat) -> Backdrop
     @ViewBuilder var content: (_ canvasWidth: CGFloat, _ scale: CGFloat) -> Content
 
     var body: some View {
         GeometryReader { geo in
-            // 正常情况下（横屏 iPhone 比 16:9 宽）按高度定缩放，宽度反推，
-            // 一个像素黑边都不剩；比 16:9 更窄的容器（iPad）才退回按宽度缩放，
-            // 宁可上下留黑，也不把内容裁掉。
             let s = max(min(geo.size.height / design.height,
                             geo.size.width / design.width), 0.01)
             let w = max(design.width, geo.size.width / s)
@@ -93,8 +90,25 @@ struct FullBleedCanvas<Content: View>: View {
                 .offset(x: ox, y: oy)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .clipped()
+                // 背景放在 background 里：background 不参与父视图排版，
+                // 再 ignoresSafeArea 就能一路画到屏幕最边上（标签栏、Home 条后面），
+                // 不会把内容层也一起顶大。
+                .background {
+                    GeometryReader { bg in
+                        let bs = max(min(bg.size.height / design.height,
+                                         bg.size.width / design.width), 0.01)
+                        let bw = max(design.width, bg.size.width / bs)
+
+                        backdrop(bw)
+                            .frame(width: bw, height: design.height, alignment: .topLeading)
+                            .scaleEffect(bs, anchor: .topLeading)
+                            .frame(width: bg.size.width, height: bg.size.height,
+                                   alignment: .topLeading)
+                            .clipped()
+                    }
+                    .ignoresSafeArea()
+                }
         }
-        .ignoresSafeArea(edges: [.horizontal, .top])
         .background(Color.black.ignoresSafeArea())
     }
 }

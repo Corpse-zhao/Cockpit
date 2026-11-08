@@ -179,16 +179,11 @@ struct RedlineDashboard: View {
     var body: some View {
         // 铺满逻辑统一收进 FullBleedCanvas：设计稿 1280×720，
         // 画布宽度按容器反推（横屏 iPhone 比 16:9 宽，硬缩放就会左右留黑边）。
-        FullBleedCanvas { w, _ in
+        FullBleedCanvas(backdrop: { w in RedlineBackdrop(width: w) }) { w, _ in
             let dx = (w - 1280) / 2          // 中间那一组（斜梯+巨字+雷达）居中
             let rx = w - 1280                // 右列贴右边
 
             ZStack(alignment: .topLeading) {
-                Color.black
-
-                RedlineBackdrop(width: w)
-                    .frame(width: w, height: 720)
-
                 TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
                     let f = engine.step(at: ctx.date, speed: speed, maxSpeed: maxSpeed)
 
