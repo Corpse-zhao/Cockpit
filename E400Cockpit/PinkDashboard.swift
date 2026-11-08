@@ -62,6 +62,10 @@ struct PinkDashboard: View {
     var body: some View {
         FullBleedCanvas { w, _ in
             let arc = PinkArc(width: w)
+            // 1280 宽的版面在 2.17:1 的横屏上会被拉宽到 1700+，
+            // 中间那组（立绘 / 车速 / 电量）必须跟着画布走，
+            // 否则会全部贴在左边 1280 里，右边空一大块。
+            let dx = max(0, (w - 1280) / 2)
 
             ZStack(alignment: .topLeading) {
                 Color.black
@@ -75,15 +79,15 @@ struct PinkDashboard: View {
                             .frame(width: w, height: 720)
 
                         scaleNumbers(arc: arc, vn: f.vn)
-                        coreBlock(f: f)
+                        coreBlock(f: f, dx: dx)
                         clockView()
                         weatherBadge(w: w)
-                        nosTag(f: f)
+                        nosTag(f: f, dx: dx)
                         logoView()
-                        menuBlock(f: f)
-                        speedBlock(f: f)
+                        menuBlock(f: f, dx: dx)
+                        speedBlock(f: f, dx: dx)
                         controllerBlock()
-                        batteryBlock()
+                        batteryBlock(dx: dx)
                         impactFlash(w: w, E: f.E)
                     }
                     .frame(width: w, height: 720)
@@ -241,7 +245,7 @@ struct PinkDashboard: View {
     // MARK: 中央立绘 / 核心
 
     @ViewBuilder
-    private func coreBlock(f: RedlineFrame) -> some View {
+    private func coreBlock(f: RedlineFrame, dx: CGFloat) -> some View {
         if let img = portrait {
             Image(uiImage: img)
                 .resizable()
@@ -249,25 +253,25 @@ struct PinkDashboard: View {
                 .frame(width: 300, height: 360)
                 .shadow(color: PN.pink.opacity(0.30), radius: 26)
                 .opacity(0.94)
-                .offset(x: 550,
+                .offset(x: 550 + dx,
                         y: 282 - CGFloat(sin(f.t * 1.6)) * 2 - CGFloat(f.E) * 5)
         } else {
             PinkCoreCanvas(vn: f.vn, E: f.E, t: f.t)
                 .frame(width: 320, height: 320)
-                .offset(x: 702 - 160, y: 308)
+                .offset(x: 702 - 160 + dx, y: 308)
         }
     }
 
     // MARK: NOS
 
-    private func nosTag(f: RedlineFrame) -> some View {
+    private func nosTag(f: RedlineFrame, dx: CGFloat) -> some View {
         let on = watts > 1500 || f.jolt > 0.5
         return Text("NOS")
             .font(.system(size: 19, weight: .heavy))
             .tracking(8)
             .foregroundColor(on ? PN.hot : .white.opacity(0.42))
             .shadow(color: on ? PN.hot.opacity(0.9) : .clear, radius: 10)
-            .offset(x: 396, y: 188)
+            .offset(x: 396 + dx, y: 188)
     }
 
     // MARK: 左下 logo
@@ -306,7 +310,7 @@ struct PinkDashboard: View {
 
     // MARK: 菜单
 
-    private func menuBlock(f: RedlineFrame) -> some View {
+    private func menuBlock(f: RedlineFrame, dx: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
                 Image(systemName: "circle.circle.fill")
@@ -324,7 +328,7 @@ struct PinkDashboard: View {
             row("里程", String(format: "%.1fkm", central.tripKm))
         }
         .frame(width: 268, alignment: .leading)
-        .offset(x: 420, y: 292)
+        .offset(x: 420 + dx, y: 292)
     }
 
     private func row(_ label: String, _ value: String) -> some View {
@@ -358,7 +362,7 @@ struct PinkDashboard: View {
 
     // MARK: 速度 + 电压 / 功率
 
-    private func speedBlock(f: RedlineFrame) -> some View {
+    private func speedBlock(f: RedlineFrame, dx: CGFloat) -> some View {
         VStack(spacing: 0) {
             Text("\(Int(speed.rounded()))")
                 .font(PN.num(96))
@@ -387,7 +391,7 @@ struct PinkDashboard: View {
             }
         }
         .frame(width: 210)
-        .offset(x: 799, y: 252)
+        .offset(x: 799 + dx, y: 252)
     }
 
     private func pair(_ label: String, _ value: String, _ unit: String) -> some View {
@@ -447,7 +451,7 @@ struct PinkDashboard: View {
 
     // MARK: 底栏：电量 + 续航
 
-    private func batteryBlock() -> some View {
+    private func batteryBlock(dx: CGFloat) -> some View {
         HStack(alignment: .bottom, spacing: 14) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("电量")
@@ -483,7 +487,7 @@ struct PinkDashboard: View {
                 }
             }
         }
-        .offset(x: 556, y: 610)
+        .offset(x: 556 + dx, y: 610)
     }
 
     private var segmentBar: some View {

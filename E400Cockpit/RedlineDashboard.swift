@@ -201,9 +201,7 @@ struct RedlineDashboard: View {
                         // —— 内容 ——
                         topBar(f: f, width: w)
                         batteryBlock(f: f)
-                        ladderBlock(f: f, dx: dx)
-                        speedBlock(f: f, dx: dx)
-                        radarBlock(f: f, dx: dx)
+                        middleCluster(f: f, dx: dx)
                         powerRing(f: f, rx: rx)
                         tempRing(f: f, rx: rx)
                         gRow(f: f, width: w)
@@ -434,6 +432,27 @@ struct RedlineDashboard: View {
 
     // MARK: 车速巨字
 
+    /// 斜梯 + 巨字 + 雷达这一组。横屏比 16:9 宽，画布被拉宽到 1700+，
+    /// 中间只剩小小一坨、上下左右都空，所以这一组整体放大一点。
+    /// 放大锚点在中心，1280 宽的设计也不会顶到导航那一行。
+    private func middleCluster(f: RedlineFrame, dx: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            ladderBlock(f: f, dx: 0)
+            speedBlock(f: f, dx: 0)
+            radarBlock(f: f, dx: 0)
+        }
+        .frame(width: 1280, height: 720, alignment: .topLeading)
+        .scaleEffect(Self.middleZoom, anchor: .center)
+        .frame(width: 1280, height: 720)
+        // 放大后整组重心偏上，再往下压一点，别让下面空出一条
+        .offset(x: dx, y: Self.middleDrop)
+    }
+
+    /// 中间一组的放大倍数。再大斜梯顶端就会顶到顶部导航那一行。
+    private static let middleZoom: CGFloat = 1.15
+    /// 放大后补一点下移量，让这一组的上下留白均匀
+    private static let middleDrop: CGFloat = 40
+
     private func speedBlock(f: RedlineFrame, dx: CGFloat) -> some View {
         VStack(spacing: 14) {
             ZStack {
@@ -489,12 +508,15 @@ struct RedlineDashboard: View {
         let squash: CGFloat = text.count >= 3 ? 0.80 : (text.count == 2 ? 0.92 : 1.00)
 
         return Text(text)
-            .font(RL.num(175))
-            .kerning(-12)
+            // 圆体（design: .rounded）在 175pt 下那个「0」右边几乎是直的，
+            // 看着像被切掉一块；换成默认 SF Pro 的重体 + 斜体才是参考图那种椭圆。
+            // 斜体本身已经够歪，所以去掉了原来的 skew，不再二次倾斜。
+            .font(.system(size: 175, weight: .heavy))
+            .italic()
+            .kerning(-10)
             .lineLimit(1)
             .frame(width: 330, height: 160)
             .scaleEffect(x: squash, y: 1)
-            .skew(-0.16)
     }
 
     /// 参考片里这里是写死的 SPORT。换成真实状态更有用：
