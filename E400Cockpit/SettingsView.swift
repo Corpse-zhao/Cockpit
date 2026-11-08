@@ -1127,106 +1127,153 @@ private struct StylePreviewThumb: View {
     var theme: ThemePreset
 
     var body: some View {
+        ZStack {
+            LinearGradient(colors: [theme.baseDark, theme.deep],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            layer
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// 单独拆一层：三套骨架塞在同一个 body 里，Swift 的类型推导会直接超时，
+    /// 所以每套再拆成独立的小 struct，且数值先算成 let 再往里塞。
+    @ViewBuilder
+    private var layer: some View {
+        switch style {
+        case .neon:    NeonThumb(theme: theme)
+        case .redline: RedlineThumb()
+        case .pink:    PinkThumb()
+        }
+    }
+}
+
+// 霓虹：圆盘 + 两段进度弧
+private struct NeonThumb: View {
+    var theme: ThemePreset
+
+    var body: some View {
+        GeometryReader { g in
+            let d = g.size.height * 0.62
+            ZStack {
+                Circle()
+                    .trim(from: 0, to: 0.75)
+                    .stroke(theme.accent, style: StrokeStyle(lineWidth: 3.5, lineCap: .butt))
+                    .rotationEffect(.degrees(135))
+                    .frame(width: d, height: d)
+                Circle()
+                    .trim(from: 0, to: 0.38)
+                    .stroke(theme.accentLight, style: StrokeStyle(lineWidth: 3.5, lineCap: .butt))
+                    .rotationEffect(.degrees(135))
+                    .frame(width: d, height: d)
+            }
+            .frame(width: g.size.width, height: g.size.height)
+        }
+    }
+}
+
+// 红黑：斜梯 + 冷白巨字 + 一团红光，不吃主题色
+private struct RedlineThumb: View {
+    var body: some View {
+        GeometryReader { g in
+            let w = g.size.width
+            let h = g.size.height
+            let glow: [Color] = [Color(red: 0.52, green: 0.03, blue: 0.08).opacity(0.95), Color.clear]
+
+            ZStack {
+                RadialGradient(colors: glow,
+                               center: UnitPoint(x: 0.52, y: 0.62),
+                               startRadius: 2, endRadius: w * 0.72)
+
+                ladder(w: w, h: h)
+                giant(h: h, w: w)
+            }
+            .frame(width: w, height: h)
+        }
+    }
+
+    private func ladder(w: CGFloat, h: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 2.8) {
+            ForEach(0..<7, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 0.7)
+                    .fill(i >= 5 ? RL.red : Color.white.opacity(0.22 + Double(i) * 0.09))
+                    .frame(width: 15, height: 1.7)
+                    .offset(x: CGFloat(i) * 4.6)
+            }
+        }
+        .rotationEffect(.degrees(-24))
+        .offset(x: -w * 0.24, y: h * 0.04)
+    }
+
+    private func giant(h: CGFloat, w: CGFloat) -> some View {
+        Text("88")
+            .font(.system(size: h * 0.60, weight: .heavy, design: .rounded))
+            .foregroundColor(.white)
+            .shadow(color: RL.red.opacity(0.85), radius: 7)
+            .scaleEffect(x: 0.78, y: 1)
+            .offset(x: w * 0.16, y: -h * 0.05)
+    }
+}
+
+// 粉黑：顶弧刻度 + 中间一颗粉光核心
+private struct PinkThumb: View {
+    var body: some View {
         GeometryReader { g in
             let w = g.size.width
             let h = g.size.height
 
             ZStack {
-                LinearGradient(colors: [theme.baseDark, theme.deep],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                layer(w: w, h: h)
+                glow(radius: w * 0.62)
+                PinkThumbTicks()
+                core(h: h, w: w)
+                giant(h: h, w: w)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .frame(width: w, height: h)
         }
     }
 
-    /// 单独拆一层：三套骨架塞在同一个 body 里，Swift 的类型推导会直接超时。
-    @ViewBuilder
-    private func layer(w: CGFloat, h: CGFloat) -> some View {
-        switch style {
-        case .neon:    neonLayer(w: w, h: h)
-        case .redline: redlineLayer(w: w, h: h)
-        case .pink:    pinkLayer(w: w, h: h)
-        }
+    private func glow(radius: CGFloat) -> some View {
+        let cols: [Color] = [Color(red: 1.0, green: 0.30, blue: 0.55).opacity(0.32), Color.clear]
+        return RadialGradient(colors: cols,
+                              center: UnitPoint(x: 0.55, y: 0.62),
+                              startRadius: 2, endRadius: radius)
     }
 
-    // 霓虹：圆盘 + 两段进度弧
-    private func neonLayer(w: CGFloat, h: CGFloat) -> some View {
-        ZStack {
-            Circle()
-                .trim(from: 0, to: 0.75)
-                .stroke(theme.accent, style: StrokeStyle(lineWidth: 3.5, lineCap: .butt))
-                .rotationEffect(.degrees(135))
-                .frame(width: h * 0.62, height: h * 0.62)
-            Circle()
-                .trim(from: 0, to: 0.38)
-                .stroke(theme.accentLight, style: StrokeStyle(lineWidth: 3.5, lineCap: .butt))
-                .rotationEffect(.degrees(135))
-                .frame(width: h * 0.62, height: h * 0.62)
-        }
+    private func core(h: CGFloat, w: CGFloat) -> some View {
+        let cols: [Color] = [PN.pinkHi, PN.pink, PN.red.opacity(0)]
+        let d = h * 0.46
+        return Circle()
+            .fill(RadialGradient(colors: cols,
+                                 center: .center, startRadius: 0, endRadius: h * 0.26))
+            .frame(width: d, height: d)
+            .offset(x: -w * 0.06, y: h * 0.10)
     }
 
-    // 红黑：斜梯 + 冷白巨字 + 一团红光，不吃主题色
-    private func redlineLayer(w: CGFloat, h: CGFloat) -> some View {
-        ZStack {
-            RadialGradient(colors: [Color(red: 0.52, green: 0.03, blue: 0.08).opacity(0.95), .clear],
-                           center: UnitPoint(x: 0.52, y: 0.62),
-                           startRadius: 2, endRadius: w * 0.72)
+    private func giant(h: CGFloat, w: CGFloat) -> some View {
+        Text("88")
+            .font(.system(size: h * 0.40, weight: .heavy))
+            .italic()
+            .foregroundColor(.white)
+            .offset(x: w * 0.30, y: h * 0.20)
+    }
+}
 
-            VStack(alignment: .leading, spacing: 2.8) {
-                ForEach(0..<7, id: \.self) { i in
-                    RoundedRectangle(cornerRadius: 0.7)
-                        .fill(i >= 5 ? RL.red : Color.white.opacity(0.22 + Double(i) * 0.09))
-                        .frame(width: 15, height: 1.7)
-                        .offset(x: CGFloat(i) * 4.6)
-                }
+/// 缩略图顶部那条很浅的弧线刻度
+private struct PinkThumbTicks: View {
+    var body: some View {
+        Canvas { ctx, size in
+            let cx = size.width / 2
+            let cy = size.height * 1.02
+            let r = size.width * 0.58
+            for i in 0...14 {
+                let a = (-36.0 + 72.0 * Double(i) / 14.0) * Double.pi / 180.0
+                let x = cx + r * CGFloat(sin(a))
+                let y = cy - r * CGFloat(cos(a)) * 0.30
+                let color = i >= 11 ? RL.red : Color.white.opacity(0.82)
+                var p = Path()
+                p.move(to: CGPoint(x: x, y: y))
+                p.addLine(to: CGPoint(x: x, y: y - 5))
+                ctx.stroke(p, with: .color(color), lineWidth: 1.2)
             }
-            .rotationEffect(.degrees(-24))
-            .offset(x: -w * 0.24, y: h * 0.04)
-
-            Text("88")
-                .font(.system(size: h * 0.60, weight: .heavy, design: .rounded))
-                .foregroundColor(.white)
-                .shadow(color: RL.red.opacity(0.85), radius: 7)
-                .scaleEffect(x: 0.78, y: 1)
-                .offset(x: w * 0.16, y: -h * 0.05)
-        }
-    }
-
-    // 粉黑：顶弧刻度 + 中间一颗粉光核心
-    private func pinkLayer(w: CGFloat, h: CGFloat) -> some View {
-        ZStack {
-            RadialGradient(colors: [Color(red: 1.0, green: 0.30, blue: 0.55).opacity(0.32), .clear],
-                           center: UnitPoint(x: 0.55, y: 0.62),
-                           startRadius: 2, endRadius: w * 0.62)
-
-            Canvas { ctx, size in
-                let cx = size.width / 2
-                let cy = size.height * 1.02
-                let r = size.width * 0.58
-                for i in 0...14 {
-                    let a = (-36 + 72 * Double(i) / 14) * .pi / 180
-                    let x = cx + r * CGFloat(sin(a))
-                    let y = cy - r * CGFloat(cos(a)) * 0.30
-                    var p = Path()
-                    p.move(to: CGPoint(x: x, y: y))
-                    p.addLine(to: CGPoint(x: x, y: y - 5))
-                    ctx.stroke(p, with: .color(i >= 11 ? RL.red : Color.white.opacity(0.82)),
-                               lineWidth: 1.2)
-                }
-            }
-
-            Circle()
-                .fill(RadialGradient(colors: [PN.pinkHi, PN.pink, PN.red.opacity(0)],
-                                     center: .center, startRadius: 0, endRadius: h * 0.26))
-                .frame(width: h * 0.46, height: h * 0.46)
-                .offset(x: -w * 0.06, y: h * 0.10)
-
-            Text("88")
-                .font(.system(size: h * 0.40, weight: .heavy))
-                .italic()
-                .foregroundColor(.white)
-                .offset(x: w * 0.30, y: h * 0.20)
         }
     }
 }

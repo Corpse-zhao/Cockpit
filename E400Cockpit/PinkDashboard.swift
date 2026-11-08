@@ -97,17 +97,8 @@ struct PinkDashboard: View {
                         batteryBlock(f: f, w: w)
                         odoBlock(w: w)
 
-                        // 冲击：一层粉闪 + 轻微抖动在容器上做
-                        Rectangle()
-                            .fill(RadialGradient(colors: [PN.pink.opacity(0.55),
-                                                          PN.red.opacity(0.20),
-                                                          .clear],
-                                                 center: UnitPoint(x: 0.52, y: 0.62),
-                                                 startRadius: 4, endRadius: 520))
-                            .frame(width: w, height: 720)
-                            .opacity(f.E * 0.13)
-                            .blendMode(.screen)
-                            .allowsHitTesting(false)
+                        // 冲击：一层粉闪，抖动与缩放在容器上做
+                        impactFlash(w: w, E: f.E)
                     }
                     .frame(width: w, height: 720)
                     .offset(x: f.shakeX * 0.36, y: f.shakeY * 0.36)
@@ -170,6 +161,20 @@ struct PinkDashboard: View {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         clockText = f.string(from: Date())
+    }
+
+    // MARK: 冲击闪光
+
+    private func impactFlash(w: CGFloat, E: Double) -> some View {
+        let cols: [Color] = [PN.pink.opacity(0.55), PN.red.opacity(0.20), Color.clear]
+        return Rectangle()
+            .fill(RadialGradient(colors: cols,
+                                 center: UnitPoint(x: 0.52, y: 0.62),
+                                 startRadius: 4, endRadius: 520))
+            .frame(width: w, height: 720)
+            .opacity(E * 0.13)
+            .blendMode(.screen)
+            .allowsHitTesting(false)
     }
 
     // MARK: 底
