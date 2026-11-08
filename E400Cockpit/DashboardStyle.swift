@@ -3,15 +3,17 @@ import SwiftUI
 
 // MARK: - 仪表样式
 
-/// 两套仪表骨架。连接逻辑（CockpitCentral / BmsCentral）与 UI 完全解耦，
+/// 三套仪表骨架。连接逻辑（CockpitCentral / BmsCentral）与 UI 完全解耦，
 /// 所以换样式只是换一个 View，不影响任何蓝牙行为。
 ///
-/// 0.5.0 起收敛成两套：霓虹（圆盘 + 进度弧，默认）与红黑（斜梯 + 巨字，全屏特效）。
+/// 0.5.0 收敛成霓虹（圆盘 + 进度弧，默认）与红黑（斜梯 + 巨字，全屏特效）两套；
+/// 0.5.1 加上粉黑（顶弧刻度 + 粉光核心）。
 /// 赛道 / 液态 / 示波 / 轨道已经删掉——同一份数据做四套近似画法，维护成本高、
 /// 实际只会用一套，不如把两套打磨到位。
 enum DashboardStyle: String, CaseIterable, Identifiable {
     case neon
     case redline
+    case pink
 
     var id: String { rawValue }
 
@@ -19,6 +21,7 @@ enum DashboardStyle: String, CaseIterable, Identifiable {
         switch self {
         case .neon:    return "霓虹"
         case .redline: return "红黑"
+        case .pink:    return "粉黑"
         }
     }
 
@@ -27,6 +30,7 @@ enum DashboardStyle: String, CaseIterable, Identifiable {
         switch self {
         case .neon:    return "圆盘表 · 发光进度弧"
         case .redline: return "斜梯 + 巨字 · 加速整屏冲击"
+        case .pink:    return "顶弧刻度 · 粉光核心"
         }
     }
 
@@ -49,6 +53,7 @@ struct DashboardRoot: View {
         switch DashboardStyle.stored(styleRaw) {
         case .neon:    NeonDashboard()
         case .redline: RedlineDashboard()
+        case .pink:    PinkDashboard()
         }
     }
 }

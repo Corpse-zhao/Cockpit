@@ -231,7 +231,7 @@ struct SettingsView: View {
         } header: {
             Text("外观")
         } footer: {
-            Text("壁纸有两种填充方式：\n· 铺满屏幕——照片等比放大到盖满整块屏，多出来的部分裁掉（4:3 的照片会放大 6 成再切上下，画面看起来“被放大”就是这个原因）；\n· 完整显示——整张照片按比例缩到框内，左右（或上下）空档用同一张图的模糊版填满，一点不裁。\n\n铺满模式下导入后可以拖动、双指缩放挑显示区域，框内就是仪表页真正显示的范围；原始图单独留存，随时能重新裁剪而不会越裁越糊。\n\n仪表样式只留两套：霓虹（圆盘 + 发光进度弧，叠壁纸）与红黑（斜梯 + 巨字，全屏红黑特效、不叠壁纸，加速时整屏冲击）。两套吃同一份数据，切换即时生效、不用重连。红黑那套的车名取上面「车型」里填的字。\n\n主题色只对霓虹生效——进度弧、发光圈、指针、按钮都取主题色；只有绿/橙/红留给状态语义（正常 / 警告 / 故障），换什么主题都不变，免得误读。红黑是固定配色（血红 + 冷白），换主题色不影响它。")
+            Text("壁纸有两种填充方式：\n· 铺满屏幕——照片等比放大到盖满整块屏，多出来的部分裁掉（4:3 的照片会放大 6 成再切上下，画面看起来“被放大”就是这个原因）；\n· 完整显示——整张照片按比例缩到框内，左右（或上下）空档用同一张图的模糊版填满，一点不裁。\n\n铺满模式下导入后可以拖动、双指缩放挑显示区域，框内就是仪表页真正显示的范围；原始图单独留存，随时能重新裁剪而不会越裁越糊。\n\n仪表样式三套：霓虹（圆盘 + 发光进度弧，叠壁纸）、红黑（斜梯 + 巨字，全屏红黑特效、不叠壁纸，加速时整屏冲击）、粉黑（顶部浅弧刻度 + 0–9 刻度数字 + 中央粉光核心，参考车机 HUD 的排法）。三套吃同一份数据，切换即时生效、不用重连。红黑与粉黑的车名都取上面「车型」里填的字；粉黑的「ODO 总里程」从装上这版开始累计，之前的里程没有记录。\n\n主题色只对霓虹生效——进度弧、发光圈、指针、按钮都取主题色；只有绿/橙/红留给状态语义（正常 / 警告 / 故障），换什么主题都不变，免得误读。红黑是固定配色（血红 + 冷白），换主题色不影响它。")
         }
     }
 
@@ -1171,6 +1171,40 @@ private struct StylePreviewThumb: View {
                         .shadow(color: RL.red.opacity(0.85), radius: 7)
                         .scaleEffect(x: 0.78, y: 1)
                         .offset(x: w * 0.16, y: -h * 0.05)
+
+                case .pink:
+                    // 粉黑：顶弧刻度 + 中间一颗粉光核心
+                    RadialGradient(colors: [Color(red: 1.0, green: 0.30, blue: 0.55).opacity(0.32), .clear],
+                                   center: UnitPoint(x: 0.55, y: 0.62),
+                                   startRadius: 2, endRadius: w * 0.62)
+
+                    Canvas { ctx, size in
+                        let cx = size.width / 2
+                        let cy = size.height * 1.02
+                        let r = size.width * 0.58
+                        for i in 0...14 {
+                            let a = (-36 + 72 * Double(i) / 14) * .pi / 180
+                            let x = cx + r * CGFloat(sin(a))
+                            let y = cy - r * CGFloat(cos(a)) * 0.30
+                            var p = Path()
+                            p.move(to: CGPoint(x: x, y: y))
+                            p.addLine(to: CGPoint(x: x, y: y - 5))
+                            ctx.stroke(p, with: .color(i >= 11 ? RL.red : .white.opacity(0.82)),
+                                       lineWidth: 1.2)
+                        }
+                    }
+
+                    Circle()
+                        .fill(RadialGradient(colors: [PN.pinkHi, PN.pink, PN.red.opacity(0)],
+                                             center: .center, startRadius: 0, endRadius: h * 0.26))
+                        .frame(width: h * 0.46, height: h * 0.46)
+                        .offset(x: -w * 0.06, y: h * 0.10)
+
+                    Text("88")
+                        .font(.system(size: h * 0.40, weight: .heavy))
+                        .italic()
+                        .foregroundColor(.white)
+                        .offset(x: w * 0.30, y: h * 0.20)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
