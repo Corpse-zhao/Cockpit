@@ -18,8 +18,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.corpsezhao.e400cockpit
-        MARKETING_VERSION: "0.5.12"
-        CURRENT_PROJECT_VERSION: "37"
+        MARKETING_VERSION: "0.5.13"
+        CURRENT_PROJECT_VERSION: "38"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_BITCODE: "NO"
@@ -28,8 +28,10 @@ targets:
       properties:
         CFBundleDisplayName: Cockpit
         CFBundleName: Cockpit
-        CFBundleShortVersionString: "0.5.11"
-        CFBundleVersion: "37"
+        # 不要再写字面量：这两项必须跟着上面的构建设置走，
+        # 否则包名是新的、应用内「关于」里还是旧版本（0.5.12 就是这样翻车的）
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
