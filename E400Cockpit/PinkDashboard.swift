@@ -72,7 +72,7 @@ struct PinkDashboard: View {
 
             ZStack(alignment: .topLeading) {
                 TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
-                    let f = engine.step(at: ctx.date, speed: speed, maxSpeed: maxSpeed)
+                    let f = engine.step(at: ctx.date, speed: speed, maxSpeed: arcMax)
 
                     ZStack(alignment: .topLeading) {
                         PinkArcCanvas(arc: arc, vn: f.vn, E: f.E, t: f.t)
@@ -118,6 +118,17 @@ struct PinkDashboard: View {
 
     private var speed: Double { central.speedKmh }
     private var online: Bool { central.phase == .online || central.demoMode }
+
+    /// 顶部 0–9 刻度的满量程。这台车实际跑不到 160，量程一拉到 160
+    /// 整条弧就有 1/8 永远点不亮、0–120 全挤在左边，所以弧线固定按 140 走。
+    /// 设置里 160 那个选项仍旧保留（红黑 / 霓虹按用户选的量程走）。
+    private var arcMax: Double { min(maxSpeed, 140) }
+
+    /// 弧线下面那一行（LOGO / 菜单 / 车速）共用的对齐带。
+    /// 之前三块各自按自己的高度从顶部往下排，中线差了 20~30，看着是歪的；
+    /// 现在统一塞进同一条 180 高的带子里垂直居中，三块的中线就齐了。
+    private static let bandTop: CGFloat = 246
+    private static let bandH: CGFloat = 180
 
     private var busV: Double { central.telemetry?.busVoltage ?? 0 }
     private var busA: Double { central.telemetry?.busCurrent ?? 0 }
@@ -291,8 +302,9 @@ struct PinkDashboard: View {
                 .italic()
         }
         .foregroundColor(.white)
+        .frame(width: 380, height: Self.bandH, alignment: .leading)
         .skew(-0.14)
-        .offset(x: cx - 685, y: 258)
+        .offset(x: cx - 685, y: Self.bandTop)
     }
 
     private var flag: some View {
@@ -329,8 +341,8 @@ struct PinkDashboard: View {
             row("时间", rideText(f))
             row("里程", String(format: "%.1fkm", central.tripKm))
         }
-        .frame(width: 300, alignment: .leading)
-        .offset(x: cx - 340, y: 256)
+        .frame(width: 300, height: Self.bandH, alignment: .leading)
+        .offset(x: cx - 340, y: Self.bandTop)
     }
 
     private func row(_ label: String, _ value: String) -> some View {
@@ -379,8 +391,8 @@ struct PinkDashboard: View {
                 .foregroundColor(.white.opacity(0.50))
                 .padding(.top, 4)
         }
-        .frame(width: 250)
-        .offset(x: cx + 415, y: 226)
+        .frame(width: 250, height: Self.bandH)
+        .offset(x: cx + 415, y: Self.bandTop)
     }
 
     // MARK: 右下：功率 / 转速
