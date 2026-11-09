@@ -40,8 +40,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
-            -project Cockpit.xcodeproj \
-            -scheme Cockpit \
+            -project E400Cockpit.xcodeproj \
+            -scheme E400Cockpit \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
@@ -54,7 +54,7 @@ jobs:
       - name: Ad-hoc sign + package IPA
         run: |
           V="${{ steps.ver.outputs.version }}"
-          APP=$(find build/Build/Products -maxdepth 3 -name "Cockpit.app" | head -1)
+          APP=$(find build/Build/Products -maxdepth 3 -name "E400Cockpit.app" | head -1)
           echo "APP=$APP"
           /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP" || true
           /usr/bin/codesign -dv "$APP" 2>&1 || true
@@ -78,16 +78,14 @@ jobs:
           body: |
             凌博 E400 蓝牙仪表 v${{ steps.ver.outputs.version }}
 
-            **粉紫：亮刻度条跟着速度走，量程 140**
+            **粉紫：顶部刻度改成真实车速 0–140**
 
-            - 刻度带原来贴到 `26…width-26`（左右各留 26pt），数字却排在
-              7.8%…84.9% —— 两套映射错开，亮条走到哪、底下的数字都比它小半格，
-              速度越高差得越多
-            - 现在刻度带和 0–9 数字共用一段范围（6.5%…93.5%），数字 k 就压在
-              k/9 那根刻度正上方，亮条末端和当前速度一一对应
-            - 量程按 140 走：`vn = speed / 140`，140 以上亮条顶满（数字读数照常
-              显示真实速度），不再有「最后 1/8 永远点不亮」的情况
-            - 罩形、托弧、红线这些装饰跟着平移同样的量，形状不变
+            - 刻度数字不再用 0–9 造型，直接标 0、20、40 … 140（每 20 一格，共 8 个）
+            - 数字 v 落在 v/140 那根刻度正上方，与亮条、彗星共用同一套映射，
+              亮条末端走到哪儿，底下的数字就是多少，不用再「读格子」换算
+            - 量程 140：`vn = speed / 140`，140 以上亮条顶满，读数仍显示真实速度
+            - 当前速度最接近的那个数字会高亮（±10 km/h 内）
+            - 罩形 / 托弧 / 红线随刻度带平移，形状不变
 
             ad-hoc 签名，越狱设备经 TrollStore / AppSync / Sideloadly 安装。
           files: Cockpit-v${{ steps.ver.outputs.version }}.ipa
