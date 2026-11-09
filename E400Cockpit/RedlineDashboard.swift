@@ -174,7 +174,7 @@ struct RedlineDashboard: View {
     }
 
     private var speed: Double { central.speedKmh }
-    private var phaseOnline: Bool { central.phase == .online }
+    private var phaseOnline: Bool { central.phase == .online || central.demoMode }
 
     var body: some View {
         // 铺满逻辑统一收进 FullBleedCanvas：设计稿 1280×720，

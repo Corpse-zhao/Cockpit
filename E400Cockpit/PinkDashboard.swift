@@ -100,7 +100,8 @@ struct PinkDashboard: View {
         .opacity(appear ? 1 : 0)
         .onAppear {
             withAnimation(.easeOut(duration: 0.3)) { appear = true }
-            bms.beginAutoConnect()
+            // 演示模式下别真去连蓝牙，假数据由 DemoPlayer 喂
+            if !central.demoMode { bms.beginAutoConnect() }
             portrait = PortraitStore.image ?? UIImage(named: "portrait_default")
             weather.start()
         }
@@ -113,7 +114,7 @@ struct PinkDashboard: View {
     // MARK: 数据
 
     private var speed: Double { central.speedKmh }
-    private var online: Bool { central.phase == .online }
+    private var online: Bool { central.phase == .online || central.demoMode }
 
     private var busV: Double { central.telemetry?.busVoltage ?? 0 }
     private var busA: Double { central.telemetry?.busCurrent ?? 0 }
