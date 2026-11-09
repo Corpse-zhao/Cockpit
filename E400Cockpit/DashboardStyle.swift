@@ -73,6 +73,9 @@ struct DashboardRoot: View {
 /// 内容仍旧按安全区排版（标题栏、标签栏都不会压到数据），缩放锚点钉在左上角。
 struct FullBleedCanvas<Backdrop: View, Content: View>: View {
     var design: CGSize = CGSize(width: 1280, height: 720)
+    /// 内容也吃满整块屏幕（连标签栏后面那 50pt 一起用）。
+    /// 只在「标签栏透明、底部内容已经让开」的样式上开，否则底栏会压住数据。
+    var contentBleeds: Bool = false
     @ViewBuilder var backdrop: (_ canvasWidth: CGFloat) -> Backdrop
     @ViewBuilder var content: (_ canvasWidth: CGFloat, _ scale: CGFloat) -> Content
 
@@ -84,12 +87,26 @@ struct FullBleedCanvas<Backdrop: View, Content: View>: View {
             let ox = max(0, (geo.size.width - w * s) / 2)
             let oy = max(0, (geo.size.height - design.height * s) / 2)
 
-            content(w, s)
-                .frame(width: w, height: design.height, alignment: .topLeading)
-                .scaleEffect(s, anchor: .topLeading)
-                .offset(x: ox, y: oy)
-                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-                .clipped()
+            Group {
+                if contentBleeds {
+                    content(w, s)
+                        .frame(width: w, height: design.height, alignment: .topLeading)
+                        .scaleEffect(s, anchor: .topLeading)
+                        .offset(x: ox, y: oy)
+                        .frame(width: geo.size.width, height: geo.size.height,
+                               alignment: .topLeading)
+                        .clipped()
+                        .ignoresSafeArea(edges: [.horizontal, .top, .bottom])
+                } else {
+                    content(w, s)
+                        .frame(width: w, height: design.height, alignment: .topLeading)
+                        .scaleEffect(s, anchor: .topLeading)
+                        .offset(x: ox, y: oy)
+                        .frame(width: geo.size.width, height: geo.size.height,
+                               alignment: .topLeading)
+                        .clipped()
+                }
+            }
                 // 背景放在 background 里：background 不参与父视图排版，
                 // 再 ignoresSafeArea 就能一路画到屏幕最边上（标签栏、Home 条后面），
                 // 不会把内容层也一起顶大。

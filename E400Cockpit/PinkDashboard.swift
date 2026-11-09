@@ -62,11 +62,13 @@ struct PinkDashboard: View {
     var body: some View {
         FullBleedCanvas(backdrop: { w in backdrop(w: w) }) { w, _ in
             let arc = PinkArc(width: w)
-            // 1280 宽的版面在 2.17:1 的横屏上会被拉宽到 1800+。
-            // 这套稿子的内容其实只占了 1280 里的 44~1010，右边本来就是留白，
-            // 画布一拉宽那条留白就成了一大块黑。所以横向按「画布比 1280 宽多少」
-            // 摊开：块与块之间等比拉开，车速那一列直接贴右边。
-            let k = max(1, w / 1280)
+            // 横屏 2.37:1，画布按高度缩放到 720，宽度自然涨到 1700 左右。
+            // 以前是把各块按 k = w/1280 等比摊开，结果每一块仍然很小、
+            // 中间还空出一大片。改成：所有块以画面中线 cx 为基准摆，
+            // 左列（logo / 控制器）、中列（立绘 / 菜单）、右列（车速 / 功率）、
+            // 底行（电量 / 续航）各自贴着自己的位置，字与块整体放大 ~15%，
+            // 左右留白对称，看起来就是「整组放大居中」。
+            let cx = w / 2
 
             ZStack(alignment: .topLeading) {
                 TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
@@ -77,15 +79,16 @@ struct PinkDashboard: View {
                             .frame(width: w, height: 720)
 
                         scaleNumbers(arc: arc, vn: f.vn)
-                        coreBlock(f: f, k: k)
+                        coreBlock(f: f, cx: cx)
                         clockView()
                         weatherBadge(w: w)
-                        nosTag(f: f, k: k)
-                        logoView(k: k)
-                        menuBlock(f: f, k: k)
-                        speedBlock(f: f, w: w)
-                        controllerBlock(k: k)
-                        batteryBlock(k: k)
+                        nosTag(f: f, cx: cx)
+                        logoView(cx: cx)
+                        menuBlock(f: f, cx: cx)
+                        speedBlock(f: f, cx: cx)
+                        controllerBlock(cx: cx)
+                        batteryBlock(cx: cx)
+                        powerBlock(cx: cx)
                         impactFlash(w: w, E: f.E)
                     }
                     .frame(width: w, height: 720)
@@ -244,52 +247,52 @@ struct PinkDashboard: View {
     // MARK: 中央立绘 / 核心
 
     @ViewBuilder
-    private func coreBlock(f: RedlineFrame, k: CGFloat) -> some View {
+    private func coreBlock(f: RedlineFrame, cx: CGFloat) -> some View {
         if let img = portrait {
             Image(uiImage: img)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 300, height: 360)
+                .frame(width: 330, height: 396)
                 .shadow(color: PN.pink.opacity(0.30), radius: 26)
                 .opacity(0.94)
-                .offset(x: 550 * k,
-                        y: 282 - CGFloat(sin(f.t * 1.6)) * 2 - CGFloat(f.E) * 5)
+                .offset(x: cx - 20,
+                        y: 204 - CGFloat(sin(f.t * 1.6)) * 2 - CGFloat(f.E) * 5)
         } else {
             PinkCoreCanvas(vn: f.vn, E: f.E, t: f.t)
-                .frame(width: 320, height: 320)
-                .offset(x: (702 - 160) * k, y: 308)
+                .frame(width: 330, height: 330)
+                .offset(x: cx - 165, y: 250)
         }
     }
 
     // MARK: NOS
 
-    private func nosTag(f: RedlineFrame, k: CGFloat) -> some View {
+    private func nosTag(f: RedlineFrame, cx: CGFloat) -> some View {
         let on = watts > 1500 || f.jolt > 0.5
         return Text("NOS")
-            .font(.system(size: 19, weight: .heavy))
+            .font(.system(size: 21, weight: .heavy))
             .tracking(8)
             .foregroundColor(on ? PN.hot : .white.opacity(0.42))
             .shadow(color: on ? PN.hot.opacity(0.9) : .clear, radius: 10)
-            .offset(x: 396 * k, y: 188)
+            .offset(x: cx - 262, y: 196)
     }
 
     // MARK: 左下 logo
 
-    private func logoView(k: CGFloat) -> some View {
+    private func logoView(cx: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 Text("PINK")
-                    .font(.system(size: 45, weight: .heavy))
+                    .font(.system(size: 54, weight: .heavy))
                     .italic()
                 flag
             }
             Text("OVERBOOST.")
-                .font(.system(size: 45, weight: .heavy))
+                .font(.system(size: 54, weight: .heavy))
                 .italic()
         }
         .foregroundColor(.white)
         .skew(-0.14)
-        .offset(x: 118 * k, y: 292)
+        .offset(x: cx - 685, y: 258)
     }
 
     private var flag: some View {
@@ -299,26 +302,26 @@ struct PinkDashboard: View {
                     ForEach(0..<4, id: \.self) { c in
                         Rectangle()
                             .fill((r + c) % 2 == 0 ? Color.white : Color.black)
-                            .frame(width: 8, height: 7)
+                            .frame(width: 9, height: 8)
                     }
                 }
             }
         }
-        .frame(width: 33, height: 22)
+        .frame(width: 37, height: 24)
     }
 
     // MARK: 菜单
 
-    private func menuBlock(f: RedlineFrame, k: CGFloat) -> some View {
+    private func menuBlock(f: RedlineFrame, cx: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
                 Image(systemName: "circle.circle.fill")
-                    .font(.system(size: 13))
+                    .font(.system(size: 14))
                 Text("DASHBOARD")
-                    .font(.system(size: 19, weight: .heavy))
+                    .font(.system(size: 21, weight: .heavy))
                     .tracking(2)
                 Image(systemName: "play.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
             }
             .foregroundColor(PN.red)
             .shadow(color: PN.red.opacity(0.7), radius: 8)
@@ -326,26 +329,26 @@ struct PinkDashboard: View {
             row("时间", rideText(f))
             row("里程", String(format: "%.1fkm", central.tripKm))
         }
-        .frame(width: 268, alignment: .leading)
-        .offset(x: 420 * k, y: 292)
+        .frame(width: 300, alignment: .leading)
+        .offset(x: cx - 340, y: 256)
     }
 
     private func row(_ label: String, _ value: String) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Text(label)
-                    .font(.system(size: 15))
+                    .font(.system(size: 17))
                     .tracking(1)
                     .foregroundColor(.white.opacity(0.55))
                     .shadow(color: .black.opacity(0.95), radius: 4, y: 1)
-                    .frame(width: 64, alignment: .leading)
+                    .frame(width: 72, alignment: .leading)
                 Text(value)
-                    .font(PN.num(24, .heavy))
+                    .font(PN.num(31, .heavy))
                     .foregroundColor(.white)
                     .shadow(color: .black.opacity(0.95), radius: 5, y: 1)
                 Spacer(minLength: 0)
             }
-            .padding(.top, 15)
+            .padding(.top, 18)
             .padding(.bottom, 8)
 
             Rectangle()
@@ -359,55 +362,58 @@ struct PinkDashboard: View {
         return "\(total / 60)小时\(total % 60)分"
     }
 
-    // MARK: 速度 + 电压 / 功率
+    // MARK: 车速（右上）
 
-    private func speedBlock(f: RedlineFrame, w: CGFloat) -> some View {
+    private func speedBlock(f: RedlineFrame, cx: CGFloat) -> some View {
         VStack(spacing: 0) {
             Text("\(Int(speed.rounded()))")
-                .font(PN.num(96))
+                .font(PN.num(124))
                 .italic()
                 .foregroundColor(.white)
                 .shadow(color: .black.opacity(0.80), radius: 10, y: 2)
                 .scaleEffect(1 + f.E * 0.05)
 
             Text("km/h")
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 23, weight: .bold))
                 .tracking(3)
                 .foregroundColor(.white.opacity(0.50))
-                .padding(.top, 2)
-
-            Rectangle()
-                .fill(LinearGradient(colors: [Color.clear,
-                                              Color.white.opacity(0.28),
-                                              Color.clear],
-                                     startPoint: .leading, endPoint: .trailing))
-                .frame(height: 1)
-                .padding(.vertical, 11)
-
-            HStack(spacing: 0) {
-                pair("电压", String(format: "%.1f", busV), "V")
-                pair("功率", "\(Int(watts.rounded()))", "W")
-            }
+                .padding(.top, 4)
         }
-        .frame(width: 210)
-        .offset(x: w - 130 - 210, y: 252)   // 贴右边，130 是右边距
+        .frame(width: 250)
+        .offset(x: cx + 415, y: 226)
+    }
+
+    // MARK: 右下：功率 / 转速
+
+    /// 底行右侧那一格。以前和速度挤在一列，右下一大片是空的；
+    /// 拆出来之后底行从左到右读过去是「电气 → 电池 → 功率」，和参考图一致。
+    private func powerBlock(cx: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            pair("功率", "\(Int(watts.rounded()))", "W")
+            pair("转速", "\(rpm)", "r/min")
+        }
+        .frame(width: 250)
+        .offset(x: cx + 415, y: 598)
     }
 
     private func pair(_ label: String, _ value: String, _ unit: String) -> some View {
         VStack(spacing: 3) {
             Text(label)
-                .font(.system(size: 12))
+                .font(.system(size: 14))
                 .tracking(1)
                 .foregroundColor(.white.opacity(0.66))
                 .shadow(color: .black.opacity(0.95), radius: 4, y: 1)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
-                    .font(PN.num(30))
+                    .font(PN.num(38))
                     .foregroundColor(.white)
                     .shadow(color: .black.opacity(0.90), radius: 5, y: 1)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
                 Text(unit)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white.opacity(0.62))
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity)
@@ -415,34 +421,33 @@ struct PinkDashboard: View {
 
     // MARK: 左下控制器
 
-    private func controllerBlock(k: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 26) {
+    private func controllerBlock(cx: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 30) {
                 cell("电压", String(format: "%.1f", busV), "V")
                 cell("电流", String(format: "%.1f", busA), "A")
             }
-            HStack(alignment: .firstTextBaseline, spacing: 26) {
+            HStack(alignment: .firstTextBaseline, spacing: 30) {
                 cell("控温", tempText(ctrlT), "°c")
                 cell("电机", tempText(motorT), "°c")
-                cell("转速", "\(rpm)", "")
             }
         }
         .skew(-0.12)
-        .offset(x: 44 * k, y: 590)
+        .offset(x: cx - 675, y: 578)
     }
 
     private func cell(_ label: String, _ value: String, _ unit: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             Text(label)
-                .font(.system(size: 13))
+                .font(.system(size: 15))
                 .tracking(1)
                 .foregroundColor(.white.opacity(0.55))
             Text(value)
-                .font(PN.num(33))
+                .font(PN.num(42))
                 .foregroundColor(.white)
             if !unit.isEmpty {
                 Text(unit)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundColor(.white.opacity(0.60))
             }
         }
@@ -450,19 +455,19 @@ struct PinkDashboard: View {
 
     // MARK: 底栏：电量 + 续航
 
-    private func batteryBlock(k: CGFloat) -> some View {
-        HStack(alignment: .bottom, spacing: 14) {
+    private func batteryBlock(cx: CGFloat) -> some View {
+        HStack(alignment: .bottom, spacing: 16) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("电量")
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
                     .tracking(2)
                     .foregroundColor(.white.opacity(0.50))
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text("\(soc)")
-                        .font(PN.num(44))
+                        .font(PN.num(54))
                         .foregroundColor(.white)
                     Text("%")
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.system(size: 22, weight: .bold))
                         .foregroundColor(.white.opacity(0.55))
                 }
             }
@@ -471,22 +476,22 @@ struct PinkDashboard: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("续航")
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
                     .tracking(2)
                     .foregroundColor(.white.opacity(0.50))
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(rangeKm.map { "\($0)" } ?? "--")
-                        .font(PN.num(62))
+                        .font(PN.num(74))
                         .italic()
                         .foregroundColor(.white)
                         .shadow(color: .white.opacity(0.24), radius: 18)
                     Text("km")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.system(size: 22, weight: .semibold))
                         .foregroundColor(.white.opacity(0.55))
                 }
             }
         }
-        .offset(x: 556 * k, y: 610)
+        .offset(x: cx - 185, y: 602)
     }
 
     private var segmentBar: some View {
@@ -496,7 +501,7 @@ struct PinkDashboard: View {
                 let hot = i >= 17
                 RoundedRectangle(cornerRadius: 1)
                     .fill(lit ? (hot ? PN.hot : Color.white) : Color.white.opacity(0.15))
-                    .frame(width: 9, height: 19)
+                    .frame(width: 11, height: 23)
                     .shadow(color: lit ? (hot ? PN.hot : Color.white).opacity(0.45) : Color.clear,
                             radius: 4)
             }
