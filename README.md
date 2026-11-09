@@ -1,4 +1,4 @@
-# E400Cockpit
+# Cockpit
 
 凌博 E400 控制器蓝牙直连仪表 App（九号 E80c MK2）。
 
@@ -63,6 +63,6 @@
 
 `runs-on: macos-15`（macos-14 现在只发 arm64 runner，免费额度不支持，会直接 cancelled）。
 
-产物：Release 页 `E400Cockpit-v0.1.0.ipa`，ad-hoc 签名，越狱机经 TrollStore / AppSync / Sideloadly 安装。
+产物：Release 页 `Cockpit-v0.1.0.ipa`，ad-hoc 签名，越狱机经 TrollStore / AppSync / Sideloadly 安装。
 
 协议参考：开源逆向基线（Motexa 2.7.0 APK 反编译）移植。

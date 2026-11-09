@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct E400CockpitApp: App {
+struct CockpitApp: App {
     @StateObject private var central = CockpitCentral()
     /// 电池是独立的一条 BLE 链路，和控制器互不影响
     @StateObject private var bms = BmsCentral()
