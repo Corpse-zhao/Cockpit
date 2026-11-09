@@ -479,13 +479,14 @@ struct RedlineDashboard: View {
                     .foregroundColor(.white)
                     .shadow(color: RL.red.opacity(0.85), radius: 26)
 
-                // 数字横向撕裂：上下两片反向错位
+                // 数字横向撕裂：上下两片反向错位。
+                // 遮罩的宽度要比数字宽一点，否则会顺着 330 的框把右边切齐。
                 number(f).foregroundColor(.white)
                     .offset(x: f.E2 * 9)
-                    .mask(alignment: .top) { Rectangle().frame(height: 84) }
+                    .mask(alignment: .top) { Rectangle().frame(width: 430, height: 84) }
                 number(f).foregroundColor(.white)
                     .offset(x: -f.E2 * 7)
-                    .mask(alignment: .bottom) { Rectangle().frame(height: 66) }
+                    .mask(alignment: .bottom) { Rectangle().frame(width: 430, height: 66) }
             }
             .frame(width: 330, height: 150)
 
@@ -503,13 +504,17 @@ struct RedlineDashboard: View {
         let squash: CGFloat = text.count >= 3 ? 0.80 : (text.count == 2 ? 0.92 : 1.00)
 
         return Text(text)
-            // 圆体（design: .rounded）在 175pt 下那个「0」右边几乎是直的，
-            // 看着像被切掉一块；换成默认 SF Pro 的重体 + 斜体才是参考图那种椭圆。
-            // 斜体本身已经够歪，所以去掉了原来的 skew，不再二次倾斜。
             .font(.system(size: 175, weight: .heavy))
-            .italic()
-            .kerning(-10)
+            .kerning(-6)
             .lineLimit(1)
+            .fixedSize()          // 不接受外层 330 的宽度提议，杜绝截断
+            // 斜体不用 .italic()：它把字形拉斜之后，字宽以外多出来的那一截
+            // （右上角）会被文字自己的图层切掉，最后一位的右边就成了一条直线。
+            // 改成先给足左右余量、再做仿射斜切——斜切换的是「带余量的那一层」，
+            // 怎么歪都在框内，不会再切。
+            .padding(.horizontal, 60)
+            .skew(-0.17)
+            .offset(x: 17)        // 斜切让重心往左跑，补回来，保持中轴
             .frame(width: 330, height: 160)
             .scaleEffect(x: squash, y: 1)
     }
