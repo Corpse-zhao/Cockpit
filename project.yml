@@ -1,4 +1,4 @@
-name: E400Cockpit
+name: Cockpit
 options:
   bundleIdPrefix: com.corpsezhao
   deploymentTarget:
@@ -10,11 +10,11 @@ settings:
     CODE_SIGNING_ALLOWED: "NO"
     CODE_SIGN_IDENTITY: ""
 targets:
-  E400Cockpit:
+  Cockpit:
     type: application
     platform: iOS
     sources:
-      - path: E400Cockpit
+      - path: Cockpit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.corpsezhao.e400cockpit
@@ -24,7 +24,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_BITCODE: "NO"
     info:
-      path: E400Cockpit/Info.plist
+      path: Cockpit/Info.plist
       properties:
         CFBundleDisplayName: Cockpit
         CFBundleName: Cockpit
@@ -42,9 +42,9 @@ targets:
         NSBluetoothAlwaysUsageDescription: 通过蓝牙连接电动车辆控制器，实时读取行驶数据。
         NSLocationWhenInUseUsageDescription: 使用 GPS 计算车速与里程，比轮速换算更准确。
 schemes:
-  E400Cockpit:
+  Cockpit:
     build:
       targets:
-        E400Cockpit: all
+        Cockpit: all
     archive:
       config: Release

@@ -35,8 +35,8 @@ private struct PinkArc {
         return CGPoint(x: x, y: cy - ry * sqrt(max(0, 1 - c * c)))
     }
 
-    /// 刻度带的两端。**必须和 0–9 数字用同一段横向范围**——
-    /// 以前刻度是 26…width-26（1.5%~98.5%），数字却是 7.8%~84.9%，
+    /// 刻度带的两端。**必须和顶部数字用同一段横向范围**——
+    /// 以前刻度是 26…width-26（1.5%~98.5%），数字却排在更窄的一段，
     /// 两套映射对不上：亮条走到 vn 的位置，底下的数字却比它小半格，
     /// 速度越高偏得越多（到 9 附近能差半格）。现在两边共用 tickStart/tickEnd。
     var tickStart: CGFloat { width * 0.065 }
@@ -123,7 +123,7 @@ struct PinkDashboard: View {
     private var speed: Double { central.speedKmh }
     private var online: Bool { central.phase == .online || central.demoMode }
 
-    /// 顶部 0–9 刻度的满量程。这台车实际跑不到 160，量程一拉到 160
+    /// 顶部刻度的满量程。这台车实际跑不到 160，量程一拉到 160
     /// 整条弧就有 1/8 永远点不亮、0–120 全挤在左边，所以弧线固定按 140 走。
     /// 设置里 160 那个选项仍旧保留（红黑 / 霓虹按用户选的量程走）。
     private var arcMax: Double { min(maxSpeed, 140) }
@@ -240,22 +240,25 @@ struct PinkDashboard: View {
         }
     }
 
-    // MARK: 0–9 刻度数字
+    // MARK: 0–140 刻度数字（每 20 一格）
 
+    /// 顶部数字直接标真实车速：0、20 … 140，共 8 个。
+    /// 位置和亮条同一套映射 —— 数字 v 就落在 v/140 那根刻度正上方，
+    /// 亮条末端走到哪儿，底下的数字就是多少，不再需要「读格子」换算。
     private func scaleNumbers(arc: PinkArc, vn: Double) -> some View {
-        let cur = vn * 9
-        return ForEach(0..<10, id: \.self) { k in
-            let t = Double(k) / 9.0
-            // 和刻度带同一套映射：数字 k 就落在 k/9 那根刻度正上方
+        let cur = vn * 140
+        return ForEach(stride(from: 0, through: 140, by: 20).map { $0 }, id: \.self) { v in
+            let t = Double(v) / 140.0
             let x = arc.tickStart + CGFloat(t) * (arc.tickEnd - arc.tickStart)
             let p = arc.point(x)
             let red = x > arc.redStart
-            let near = abs(Double(k) - cur) < 0.5
-            Text("\(k)")
-                .font(.system(size: 33, weight: .heavy))
+            let near = abs(Double(v) - cur) < 10
+            Text("\(v)")
+                .font(.system(size: 30, weight: .heavy))
                 .italic()
+                .monospacedDigit()
                 .foregroundColor(near ? (red ? PN.hot : .white) : (red ? PN.red : .white))
-                .opacity(near ? 1 : (Double(k) < cur ? 0.78 : 0.34))
+                .opacity(near ? 1 : (Double(v) < cur ? 0.78 : 0.34))
                 .position(x: x, y: p.y - 44)
         }
     }

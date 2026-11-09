@@ -40,8 +40,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
-            -project E400Cockpit.xcodeproj \
-            -scheme E400Cockpit \
+            -project Cockpit.xcodeproj \
+            -scheme Cockpit \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
@@ -54,7 +54,7 @@ jobs:
       - name: Ad-hoc sign + package IPA
         run: |
           V="${{ steps.ver.outputs.version }}"
-          APP=$(find build/Build/Products -maxdepth 3 -name "E400Cockpit.app" | head -1)
+          APP=$(find build/Build/Products -maxdepth 3 -name "Cockpit.app" | head -1)
           echo "APP=$APP"
           /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP" || true
           /usr/bin/codesign -dv "$APP" 2>&1 || true
