@@ -62,10 +62,11 @@ struct PinkDashboard: View {
     var body: some View {
         FullBleedCanvas(backdrop: { w in backdrop(w: w) }) { w, _ in
             let arc = PinkArc(width: w)
-            // 1280 宽的版面在 2.17:1 的横屏上会被拉宽到 1700+，
-            // 中间那组（立绘 / 车速 / 电量）必须跟着画布走，
-            // 否则会全部贴在左边 1280 里，右边空一大块。
-            let dx = max(0, (w - 1280) / 2)
+            // 1280 宽的版面在 2.17:1 的横屏上会被拉宽到 1800+。
+            // 这套稿子的内容其实只占了 1280 里的 44~1010，右边本来就是留白，
+            // 画布一拉宽那条留白就成了一大块黑。所以横向按「画布比 1280 宽多少」
+            // 摊开：块与块之间等比拉开，车速那一列直接贴右边。
+            let k = max(1, w / 1280)
 
             ZStack(alignment: .topLeading) {
                 TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
@@ -76,15 +77,15 @@ struct PinkDashboard: View {
                             .frame(width: w, height: 720)
 
                         scaleNumbers(arc: arc, vn: f.vn)
-                        coreBlock(f: f, dx: dx)
+                        coreBlock(f: f, k: k)
                         clockView()
                         weatherBadge(w: w)
-                        nosTag(f: f, dx: dx)
-                        logoView()
-                        menuBlock(f: f, dx: dx)
-                        speedBlock(f: f, dx: dx)
-                        controllerBlock()
-                        batteryBlock(dx: dx)
+                        nosTag(f: f, k: k)
+                        logoView(k: k)
+                        menuBlock(f: f, k: k)
+                        speedBlock(f: f, w: w)
+                        controllerBlock(k: k)
+                        batteryBlock(k: k)
                         impactFlash(w: w, E: f.E)
                     }
                     .frame(width: w, height: 720)
@@ -242,7 +243,7 @@ struct PinkDashboard: View {
     // MARK: 中央立绘 / 核心
 
     @ViewBuilder
-    private func coreBlock(f: RedlineFrame, dx: CGFloat) -> some View {
+    private func coreBlock(f: RedlineFrame, k: CGFloat) -> some View {
         if let img = portrait {
             Image(uiImage: img)
                 .resizable()
@@ -250,30 +251,30 @@ struct PinkDashboard: View {
                 .frame(width: 300, height: 360)
                 .shadow(color: PN.pink.opacity(0.30), radius: 26)
                 .opacity(0.94)
-                .offset(x: 550 + dx,
+                .offset(x: 550 * k,
                         y: 282 - CGFloat(sin(f.t * 1.6)) * 2 - CGFloat(f.E) * 5)
         } else {
             PinkCoreCanvas(vn: f.vn, E: f.E, t: f.t)
                 .frame(width: 320, height: 320)
-                .offset(x: 702 - 160 + dx, y: 308)
+                .offset(x: (702 - 160) * k, y: 308)
         }
     }
 
     // MARK: NOS
 
-    private func nosTag(f: RedlineFrame, dx: CGFloat) -> some View {
+    private func nosTag(f: RedlineFrame, k: CGFloat) -> some View {
         let on = watts > 1500 || f.jolt > 0.5
         return Text("NOS")
             .font(.system(size: 19, weight: .heavy))
             .tracking(8)
             .foregroundColor(on ? PN.hot : .white.opacity(0.42))
             .shadow(color: on ? PN.hot.opacity(0.9) : .clear, radius: 10)
-            .offset(x: 396 + dx, y: 188)
+            .offset(x: 396 * k, y: 188)
     }
 
     // MARK: 左下 logo
 
-    private func logoView() -> some View {
+    private func logoView(k: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 Text("PINK")
@@ -287,7 +288,7 @@ struct PinkDashboard: View {
         }
         .foregroundColor(.white)
         .skew(-0.14)
-        .offset(x: 118, y: 292)
+        .offset(x: 118 * k, y: 292)
     }
 
     private var flag: some View {
@@ -307,7 +308,7 @@ struct PinkDashboard: View {
 
     // MARK: 菜单
 
-    private func menuBlock(f: RedlineFrame, dx: CGFloat) -> some View {
+    private func menuBlock(f: RedlineFrame, k: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
                 Image(systemName: "circle.circle.fill")
@@ -325,7 +326,7 @@ struct PinkDashboard: View {
             row("里程", String(format: "%.1fkm", central.tripKm))
         }
         .frame(width: 268, alignment: .leading)
-        .offset(x: 420 + dx, y: 292)
+        .offset(x: 420 * k, y: 292)
     }
 
     private func row(_ label: String, _ value: String) -> some View {
@@ -359,7 +360,7 @@ struct PinkDashboard: View {
 
     // MARK: 速度 + 电压 / 功率
 
-    private func speedBlock(f: RedlineFrame, dx: CGFloat) -> some View {
+    private func speedBlock(f: RedlineFrame, w: CGFloat) -> some View {
         VStack(spacing: 0) {
             Text("\(Int(speed.rounded()))")
                 .font(PN.num(96))
@@ -388,7 +389,7 @@ struct PinkDashboard: View {
             }
         }
         .frame(width: 210)
-        .offset(x: 799 + dx, y: 252)
+        .offset(x: w - 130 - 210, y: 252)   // 贴右边，130 是右边距
     }
 
     private func pair(_ label: String, _ value: String, _ unit: String) -> some View {
@@ -413,7 +414,7 @@ struct PinkDashboard: View {
 
     // MARK: 左下控制器
 
-    private func controllerBlock() -> some View {
+    private func controllerBlock(k: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 26) {
                 cell("电压", String(format: "%.1f", busV), "V")
@@ -426,7 +427,7 @@ struct PinkDashboard: View {
             }
         }
         .skew(-0.12)
-        .offset(x: 44, y: 590)
+        .offset(x: 44 * k, y: 590)
     }
 
     private func cell(_ label: String, _ value: String, _ unit: String) -> some View {
@@ -448,7 +449,7 @@ struct PinkDashboard: View {
 
     // MARK: 底栏：电量 + 续航
 
-    private func batteryBlock(dx: CGFloat) -> some View {
+    private func batteryBlock(k: CGFloat) -> some View {
         HStack(alignment: .bottom, spacing: 14) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("电量")
@@ -484,7 +485,7 @@ struct PinkDashboard: View {
                 }
             }
         }
-        .offset(x: 556 + dx, y: 610)
+        .offset(x: 556 * k, y: 610)
     }
 
     private var segmentBar: some View {
