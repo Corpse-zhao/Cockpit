@@ -35,8 +35,12 @@ private struct PinkArc {
         return CGPoint(x: x, y: cy - ry * sqrt(max(0, 1 - c * c)))
     }
 
-    var tickStart: CGFloat { 26 }
-    var tickEnd: CGFloat { width - 26 }
+    /// 刻度带的两端。**必须和 0–9 数字用同一段横向范围**——
+    /// 以前刻度是 26…width-26（1.5%~98.5%），数字却是 7.8%~84.9%，
+    /// 两套映射对不上：亮条走到 vn 的位置，底下的数字却比它小半格，
+    /// 速度越高偏得越多（到 9 附近能差半格）。现在两边共用 tickStart/tickEnd。
+    var tickStart: CGFloat { width * 0.065 }
+    var tickEnd: CGFloat { width * 0.935 }
     var redStart: CGFloat { width * 0.505 }
 }
 
@@ -242,7 +246,8 @@ struct PinkDashboard: View {
         let cur = vn * 9
         return ForEach(0..<10, id: \.self) { k in
             let t = Double(k) / 9.0
-            let x = arc.width * 0.078 + CGFloat(t) * (arc.width * 0.849 - arc.width * 0.078)
+            // 和刻度带同一套映射：数字 k 就落在 k/9 那根刻度正上方
+            let x = arc.tickStart + CGFloat(t) * (arc.tickEnd - arc.tickStart)
             let p = arc.point(x)
             let red = x > arc.redStart
             let near = abs(Double(k) - cur) < 0.5
@@ -560,13 +565,18 @@ private struct PinkArcCanvas: View {
                 ctx.stroke(path, with: .color(color.opacity(op)), lineWidth: 2.6)
             }
 
+            // 罩形 / 托弧这些装饰原来写的是绝对坐标（按 tickStart=26 摆的）。
+            // 刻度带内侧收到 6.5% 之后，整体跟着平移同样的量，形状不变。
+            let d = arc.tickStart - 26
+            let e = arc.tickEnd
+
             // 左罩形：沿刻度底走，收在 NOS
             var canopy = Path()
-            let tail = arc.point(56)
-            canopy.move(to: CGPoint(x: 10, y: tail.y + 74))
-            canopy.addLine(to: CGPoint(x: 22, y: tail.y + 37))
-            var x: CGFloat = 56
-            while x <= 392 {
+            let tail = arc.point(56 + d)
+            canopy.move(to: CGPoint(x: 10 + d, y: tail.y + 74))
+            canopy.addLine(to: CGPoint(x: 22 + d, y: tail.y + 37))
+            var x: CGFloat = 56 + d
+            while x <= 392 + d {
                 canopy.addLine(to: CGPoint(x: x, y: arc.point(x).y + 9))
                 x += 14
             }
@@ -574,9 +584,9 @@ private struct PinkArcCanvas: View {
                        style: StrokeStyle(lineWidth: 4.6, lineCap: .round, lineJoin: .round))
 
             var canopy2 = Path()
-            var x2: CGFloat = 56
-            canopy2.move(to: CGPoint(x: 10, y: tail.y + 88))
-            while x2 <= 330 {
+            var x2: CGFloat = 56 + d
+            canopy2.move(to: CGPoint(x: 10 + d, y: tail.y + 88))
+            while x2 <= 330 + d {
                 canopy2.addLine(to: CGPoint(x: x2, y: arc.point(x2).y + 22))
                 x2 += 14
             }
@@ -585,9 +595,9 @@ private struct PinkArcCanvas: View {
             // 右罩形：红，末端下垂
             var redLine = Path()
             let r0 = arc.point(arc.redStart)
-            let r1 = arc.point(min(1010, arc.width - 40))
-            let r2 = CGPoint(x: min(1170, arc.width - 30),
-                             y: arc.point(min(1170, arc.width - 30)).y + 94)
+            let r1 = arc.point(min(1010 + d, e - 14))
+            let r2 = CGPoint(x: min(1170 + d, e - 4),
+                             y: arc.point(min(1170 + d, e - 4)).y + 94)
             redLine.move(to: CGPoint(x: r0.x, y: r0.y + 18))
             redLine.addLine(to: CGPoint(x: r1.x, y: r1.y + 20))
             redLine.addCurve(to: r2,
@@ -597,17 +607,17 @@ private struct PinkArcCanvas: View {
 
             // 底部托弧
             var footL = Path()
-            footL.move(to: CGPoint(x: 46, y: 486))
-            footL.addCurve(to: CGPoint(x: 322, y: 520),
-                           control1: CGPoint(x: 140, y: 512),
-                           control2: CGPoint(x: 240, y: 520))
+            footL.move(to: CGPoint(x: 46 + d, y: 486))
+            footL.addCurve(to: CGPoint(x: 322 + d, y: 520),
+                           control1: CGPoint(x: 140 + d, y: 512),
+                           control2: CGPoint(x: 240 + d, y: 520))
             ctx.stroke(footL, with: .color(.white.opacity(0.5)), lineWidth: 2.4)
 
             var footR = Path()
-            footR.move(to: CGPoint(x: arc.width - 46, y: 486))
-            footR.addCurve(to: CGPoint(x: arc.width - 322, y: 520),
-                           control1: CGPoint(x: arc.width - 140, y: 512),
-                           control2: CGPoint(x: arc.width - 240, y: 520))
+            footR.move(to: CGPoint(x: e - 20, y: 486))
+            footR.addCurve(to: CGPoint(x: e - 296, y: 520),
+                           control1: CGPoint(x: e - 114, y: 512),
+                           control2: CGPoint(x: e - 214, y: 520))
             ctx.stroke(footR, with: .color(.white.opacity(0.5)), lineWidth: 2.4)
 
             // 彗星
