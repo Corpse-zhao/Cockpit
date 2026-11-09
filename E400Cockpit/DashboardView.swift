@@ -2,17 +2,49 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject var central: CockpitCentral
+    @EnvironmentObject var bms: BmsCentral
 
     var body: some View {
         Group {
-            switch central.phase {
-            case .idle, .scanning, .connecting:
-                ScanView()
-            case .connected, .calibrated, .online:
+            if central.demoMode {
                 DashboardRoot()
+            } else {
+                switch central.phase {
+                case .idle, .scanning, .connecting:
+                    ScanView()
+                case .connected, .calibrated, .online:
+                    DashboardRoot()
+                }
             }
         }
+        .overlay(alignment: .top) { demoBadge }
         .background(Color.black.ignoresSafeArea())
+    }
+
+    /// 演示模式入口反正在扫描页，退出的出口就放这儿——顶部中间一颗胶囊，
+    /// 点一下回扫描页。半透明小字，不抢仪表的戏。
+    @ViewBuilder
+    private var demoBadge: some View {
+        if central.demoMode {
+            Button {
+                DemoPlayer.shared.end(central: central, bms: bms)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("效果预览 · 点击退出")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .tracking(1)
+                }
+                .foregroundColor(.black)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Color.white.opacity(0.85)))
+                .shadow(color: .black.opacity(0.5), radius: 4, y: 1)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 6)
+        }
     }
 }
 
@@ -135,6 +167,24 @@ struct ScanView: View {
                 .foregroundColor(.white.opacity(0.32))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+
+            // 没连蓝牙也能看仪表效果：演示模式喂假数据，顶部胶囊退出
+            Button {
+                DemoPlayer.shared.begin(central: central, bms: bms)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "play.rectangle")
+                        .font(.system(size: 10))
+                    Text("预览仪表效果")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(Capsule().strokeBorder(Color.white.opacity(0.38), lineWidth: 1))
+                .foregroundColor(.white.opacity(0.75))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
 
             Spacer(minLength: 0)
         }

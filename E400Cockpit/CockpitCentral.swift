@@ -35,6 +35,10 @@ final class CockpitCentral: NSObject, ObservableObject {
     @Published var tripKm: Double = 0
     @Published var console: [ConsoleLine] = []
     @Published var connectedName: String?
+
+    /// 演示模式：没连蓝牙也把仪表画出来（DemoPlayer 喂假数据）。
+    /// 只存在内存里，不进 UserDefaults——关掉 App 自动恢复真实状态。
+    @Published var demoMode = false
     /// 当前生效的滚动周长（mm），供仪表页显示来源
     @Published var wheelCircMM: Double = 1426
     @Published var wheelCircSource: String = "估算"
