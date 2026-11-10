@@ -42,9 +42,17 @@ struct BmsFrameCard: View {
                             .lineLimit(3)
                     }
                 } else {
-                    Text("未连接电池，或还没收到 7E A1 应答。保护板走 FFE0，1 秒要一次状态。")
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.5))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("未连接电池，或还没收到 7E A1 应答。保护板走 FFE0，1 秒要一次状态。")
+                            .font(.system(size: 10))
+                            .foregroundColor(.white.opacity(0.5))
+                        // 排查用：发出了多少帧、收到了多少字节、走的哪条通道。
+                        // 发 0 帧 = 根本没找到可写通道；发了很多帧但 0 字节 = 板子不理这个请求。
+                        Text("已发 \(bms.txCount) 帧 · 收到 \(bms.rxTotal) 字节 · \(bms.gattInfo ?? "通道未定")")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.orange.opacity(0.9))
+                            .lineLimit(2)
+                    }
                 }
             } else {
                 Text(frame.map { String(format: "%02X", $0) }.joined(separator: " "))

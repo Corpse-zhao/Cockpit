@@ -78,6 +78,8 @@ final class BmsCentral: NSObject, ObservableObject {
     /// 收到多少条通知 / 最近几帧的形状（功能码·字节数）。
     /// 条数一直涨、解析成功数不涨，就说明板子在回、但我们拼不出来——一眼能分清是断流还是解析不了。
     @Published var rxCount = 0
+    /// 已经往板子写出去多少帧。收不到数据时用来区分「根本没写出去」和「写了板子不回」
+    @Published var txCount = 0
     @Published var rxShape = ""
     private var shapeQueue: [String] = []
     /// 实际选中的服务/特征值，排查连不上、没数据时第一眼看这个
@@ -147,6 +149,12 @@ final class BmsCentral: NSObject, ObservableObject {
     /// 「假在线」连续命中次数：先换通道，再考虑断链
     private var staleHits = 0
     private var lastStaleAt = Date.distantPast
+    /// 还没收到过帧时，两种写模式轮着试（见 writeStatus）
+    private var tryWithResponse = false
+    /// 全量枚举过特征值没有（防止 FFE0 下没通道时死循环）
+    private var enumeratedAll = false
+    /// 连上后「零字节」软复位只做一次，避免反复断链
+    private var didSoftReset = false
 
     var isUsable: Bool { phase == .online }
 
@@ -237,6 +245,7 @@ final class BmsCentral: NSObject, ObservableObject {
         gattInfo = nil
         lastRX = ""
         rxTotal = 0
+        txCount = 0
         peripheral = p
         p.delegate = self
         manager?.connect(p, options: BmsCentral.connectOptions)
@@ -298,6 +307,7 @@ final class BmsCentral: NSObject, ObservableObject {
         awaitingReply = false
         pendingSince = nil
         rxCount = 0
+        txCount = 0
         rxShape = ""
         shapeQueue = []
         notifyCandidates = []
@@ -306,6 +316,7 @@ final class BmsCentral: NSObject, ObservableObject {
         notifyChar = nil
         writeChar = nil
         gattInfo = nil
+        enumeratedAll = false
         // 意外掉线时先留着上一条数据，仪表页不会闪成「——」
         if clearData {
             telemetry = nil
@@ -407,6 +418,12 @@ final class BmsCentral: NSObject, ObservableObject {
         // 能不带响应就不带：省一个来回，数据更跟手；模块不支持再退回 withResponse
         var type: CBCharacteristicWriteType =
             w.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+        // 还没收到过帧时两种模式轮流试。有的保护板只认「带响应」的写，
+        // 光按「支持哪个用哪个」会一直撞在模块不理的那一边，看上去就是连上了没数据。
+        if !gotFrame, w.properties.contains(.write), w.properties.contains(.writeWithoutResponse) {
+            tryWithResponse.toggle()
+            type = tryWithResponse ? .withResponse : .withoutResponse
+        }
         // 但「2.5 秒没有新帧」时改成要响应的写：有的模块在没有响应的写队列里卡住后会静默丢包，
         // 带响应的一次写能把队列和链路都拽回来，顺便还能拿到系统的写入错误。
         if gotFrame, Date().timeIntervalSince(lastFrameAt) > 2.5, w.properties.contains(.write) {
@@ -415,6 +432,7 @@ final class BmsCentral: NSObject, ObservableObject {
         awaitingReply = (type == .withResponse)
         lastWriteAt = Date()
         pendingSince = Date()
+        txCount += 1
         p.writeValue(Data(AntBmsParser.statusRequest), for: w, type: type)
     }
 
@@ -522,7 +540,37 @@ extension BmsCentral: CBCentralManagerDelegate {
             UserDefaults.standard.set(n, forKey: BmsCentral.lastNameKey)
         }
         peripheral.delegate = self
+        scheduleConnectWatchdog()
         peripheral.discoverServices([BmsCentral.serviceUUID])
+    }
+
+    /// 连上后 10 秒仍是「零字节」就自我修复一次，不管界面停在哪一步：
+    /// ① 通道都没找到 → 全量枚举服务/特征值；
+    /// ② 通道找到了、通知也订阅了、却一个字节没来 → 断链重连一次
+    ///    （有的模块只在「新连接」上推数据，旧链路会静默）。
+    private func scheduleConnectWatchdog() {
+        didSoftReset = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, self.phase != .idle, !self.gotFrame else { return }
+
+            if !self.started {
+                self.lastError = "已连上，但没找到可通知/可写入的通道：这块板可能不支持蓝牙读取"
+                if !self.enumeratedAll {
+                    self.enumeratedAll = true
+                    self.peripheral?.discoverServices(nil)
+                }
+                return
+            }
+            guard self.rxTotal == 0 else { return }
+
+            if !self.didSoftReset, let p = self.peripheral {
+                self.didSoftReset = true
+                self.lastError = "已连上但收不到任何字节，正在重连一次…"
+                self.manager?.cancelPeripheralConnection(p)
+                return
+            }
+            self.lastError = "已连上但 10 秒没收到任何数据：确认这块板支持蓝牙读取"
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -566,8 +614,11 @@ extension BmsCentral: CBPeripheralDelegate {
         if let ffe0 = services.first(where: { $0.uuid == BmsCentral.serviceUUID }) {
             peripheral.discoverCharacteristics(nil, for: ffe0)
         } else if services.isEmpty {
-            // 有的固件不声明 FFE0，全量枚举再挑
-            peripheral.discoverServices(nil)
+            // 有的固件不声明 FFE0，全量枚举再挑（只做一次，避免空结果时无限重来）
+            if !enumeratedAll {
+                enumeratedAll = true
+                peripheral.discoverServices(nil)
+            }
         } else {
             for s in services { peripheral.discoverCharacteristics(nil, for: s) }
         }
@@ -576,6 +627,19 @@ extension BmsCentral: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         let chars = service.characteristics ?? []
 
+        // FFE0 底下一条特征值都没有：说明数据通道挂在别的服务上（有的固件 FFE0 只是壳）。
+        // 只回退一次：把其余服务的特征值都枚举出来，别停在「连上但没通道」。
+        if chars.isEmpty, !enumeratedAll {
+            enumeratedAll = true
+            if let all = peripheral.services, all.count > 1 {
+                for s in all where s.uuid != service.uuid {
+                    peripheral.discoverCharacteristics(nil, for: s)
+                }
+            } else {
+                peripheral.discoverServices(nil)
+            }
+            return
+        }
         func notifiable(_ c: CBCharacteristic) -> Bool {
             c.properties.contains(.notify) || c.properties.contains(.indicate)
         }
@@ -658,6 +722,20 @@ extension BmsCentral: CBPeripheralDelegate {
         if let error {
             lastError = "写入失败（\(short(characteristic.uuid))）：\(error.localizedDescription)"
         }
+    }
+
+    /// 订阅有没有成功，直接决定了收不收得到数据。
+    /// 以前这里失败是静默的：界面上就是「已连接」，永远等不到帧。
+    func peripheral(_ peripheral: CBPeripheral,
+                    didUpdateNotificationStateFor characteristic: CBCharacteristic,
+                    error: Error?) {
+        if let error {
+            lastError = "订阅 \(short(characteristic.uuid)) 失败：\(error.localizedDescription)"
+            return
+        }
+        guard characteristic.isNotifying else { return }
+        // 订阅成功却一直没字节，多半是写通道没猜对，催一次探测
+        if !gotFrame { lastProbeAt = .distantPast }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
