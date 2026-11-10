@@ -245,6 +245,8 @@ final class CockpitCentral: NSObject, ObservableObject {
             log("长帧请求 3 秒无有效回应，已自动回退标准实时帧")
         }
         let cmd = driver.nextRequestFrame()
+        // 远驱这类「只推不接」的控制器不返回请求帧，直接跳过写入
+        guard !cmd.isEmpty else { return }
         p.writeValue(Data(cmd), for: w, type: .withoutResponse)
     }
 
@@ -585,6 +587,13 @@ extension CockpitCentral: CBPeripheralDelegate {
                     writeChar = c
                 }
             }
+            // 对照表落的通道对不上时（远驱 FFE0 服务里用的是 FFEC，不是 FFE1），
+            // 退一步认这条服务里第一个能通知的特征
+            if notifyChar == nil {
+                notifyChar = chars.first {
+                    $0.properties.contains(.notify) || $0.properties.contains(.indicate)
+                }
+            }
         } else {
             // 未知通道：同一条服务里凑一对"通知 + 写入"
             let n = chars.first {
@@ -614,11 +623,16 @@ extension CockpitCentral: CBPeripheralDelegate {
 
     /// 通知/写入都齐了就开始订阅与轮询，且只做一次
     private func startIfReady(on peripheral: CBPeripheral) {
-        guard !pollingStarted, let n = notifyChar, let w = writeChar else { return }
+        // 远驱是「只推不接」：有通知通道就够，写通道可以没有
+        guard !pollingStarted, let n = notifyChar else { return }
         pollingStarted = true
         peripheral.setNotifyValue(true, for: n)
-        log("通道就绪：通知 \(n.uuid.uuidString) → 写入 \(w.uuid.uuidString)")
-        log("协议驱动：\(driver.displayName)，开始 500ms 轮询")
+        if let w = writeChar {
+            log("通道就绪：通知 \(n.uuid.uuidString) → 写入 \(w.uuid.uuidString)")
+        } else {
+            log("通道就绪：通知 \(n.uuid.uuidString)（只订阅，不发请求）")
+        }
+        log("协议驱动：\(driver.displayName)")
         UserDefaults.standard.set(transportLabel ?? "\(n.uuid.uuidString)",
                                   forKey: "last_transport")
         // 速度主干走 GPS：连上控制器就开始定位
@@ -642,6 +656,17 @@ extension CockpitCentral: CBPeripheralDelegate {
         where !modelCandidates.contains(cand) && modelCandidates.count < 6 {
             modelCandidates.append(cand)
             log("帧内发现字符串：\(cand)")
+        }
+        // 首帧嗅探：凌博还没标定时，如果这帧长得像远驱（16B + 0xAA + 0x7F3C 校验），
+        // 就地换成远驱驱动。凌博一旦标定成功就不再切，避免误伤已经在跑的车。
+        if !driver.isCalibrated, !(driver is FardriverParser), FardriverParser.looksLike(bytes) {
+            driver = FardriverParser()
+            driver.applyLayoutFromDefaults()
+            lastFrameLength = 0
+            lastRealtimeFrame = []
+            lastConfigFrame = []
+            fieldTrace = LingboParser.FieldTrace()
+            log("首帧嗅探：判定为远驱控制器，切换协议驱动")
         }
         let wasCalibrated = driver.isCalibrated
         let t = driver.feed(bytes)

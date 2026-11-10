@@ -18,8 +18,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.corpsezhao.e400cockpit
-        MARKETING_VERSION: "0.5.16"
-        CURRENT_PROJECT_VERSION: "41"
+        MARKETING_VERSION: "0.5.17"
+        CURRENT_PROJECT_VERSION: "42"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_BITCODE: "NO"
