@@ -76,19 +76,20 @@ jobs:
           tag_name: v${{ steps.ver.outputs.version }}
           name: Cockpit v${{ steps.ver.outputs.version }}
           body: |
-            凌博 E400 蓝牙仪表 v${{ steps.ver.outputs.version }}
+            Cockpit v${{ steps.ver.outputs.version }}
 
-            **新增远驱（Fardriver / VOTOL）控制器支持**
+            **本版针对「YuanQuFOC972」实测修正**
 
-            - 远驱走 FFE0 / FFEC 纯通知通道，**不发请求帧**，连上就等它推
-            - 帧：固定 16 字节 `AA | id | 12B 数据 | CRC16`，校验初值 0x7F3C（与凌博不同）
-            - 字段：0xE2 转速+档位、0xE8 电压+电流（负值=回充）、0xD6 控制器温、0xF4 电机温+SOC
-            - 转速按 `rawRpm × 4 ÷ 极对数`（默认 20），车速沿用原来的公式，不另起一套
-            - **连上后按首帧自动识别**：16 字节 + 0xAA + 校验通过才切成远驱，
-              凌博一旦标定成功就锁死，不会误切——两边插着也能各自认
+            - 广播名 `YuanQuFOC972`（远驱 = YuanQu）现在是已知品牌：
+              扫描列表能直接看到、并自动把型号填成「远驱 FOC972」，
+              不用再开「显示所有蓝牙设备」
+            - 修掉一处会吃掉全部通知的绑定错误：这类设备有两组服务
+              （FFE0/FFEC 实时 + FFF6/FFF7 配置），原来后枚举到的 FFF7
+              会把已绑定的 FFEC 顶掉，结果「订阅的是 FFEC、比对的是 FFF7」，
+              一帧都进不来。现在只在没有通知通道时才采纳自动探测结果
+            - FFE0 里没有 FFE1 时，日志会明确打印改用了哪个特征订阅
 
-            **凌博链路零改动**：驱动接口、订阅/轮询、仪表页、数据台均未改逻辑，
-            只把「必须有写通道」放宽成「有通知通道就够」，并在写通道缺失时跳过写入。
+            **没变的**：凌博链路、BMS、仪表、设置页逻辑零改动。
 
             ad-hoc 签名，越狱设备经 TrollStore / AppSync / Sideloadly 安装。
           files: Cockpit-v${{ steps.ver.outputs.version }}.ipa

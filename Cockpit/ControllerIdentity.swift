@@ -25,6 +25,11 @@ enum ControllerIdentifier {
         ("LBMC", "凌博"),
         ("LINGBO", "凌博"),
         ("VOTOL", "远驱"),
+        // 南京远驱的皮：蓝牙模块自报 "YuanQuFOC972"（远驱 = YuanQu），
+        // 和 Fardriver 是同一套 FFE0/FFEC 协议，只是广播名不同。
+        // 不放进来会被当成陌生设备，扫描列表里根本看不见。
+        ("YUANQU", "远驱"),
+        ("FARDRIVER", "远驱"),
         ("SABVOTON", "Sabvoton"),
         ("KELLY", "Kelly"),
         ("SIAECOSYS", "晶汇"),

@@ -121,6 +121,10 @@ final class CockpitCentral: NSObject, ObservableObject {
     private var autoCandidates: [(CBUUID, CBCharacteristic, CBCharacteristic)] = []
     /// 自动连接：等待出现的上次那台控制器名字（大写）
     private var autoConnectName: String?
+    /// 已收到的通知帧数。远驱那种「订阅了不推」的情况靠它判断要不要探活
+    private var rxFrames = 0
+    /// 探活性读取只做一次，别把通道当缓存轮询
+    private var probedRead = false
     /// 用户手动点了「断开」之后，就别再自动连回来，免得甩不掉
     private var suppressAutoConnect = false
 
@@ -455,6 +459,8 @@ extension CockpitCentral: CBCentralManagerDelegate {
         }
         autoConnectName = nil
         driver.reset()
+        rxFrames = 0
+        probedRead = false
         transportLabel = nil
         gattSummary = nil
         pollingStarted = false
@@ -593,6 +599,10 @@ extension CockpitCentral: CBPeripheralDelegate {
                 notifyChar = chars.first {
                     $0.properties.contains(.notify) || $0.properties.contains(.indicate)
                 }
+                if let n = notifyChar {
+                    transportLabel = "\(hint.service) / \(n.uuid.uuidString)（\(hint.label) 回退）"
+                    log("\(hint.service) 里没有 \(hint.notify)，改用 \(n.uuid.uuidString) 订阅")
+                }
             }
         } else {
             // 未知通道：同一条服务里凑一对"通知 + 写入"
@@ -607,10 +617,13 @@ extension CockpitCentral: CBPeripheralDelegate {
             }
         }
 
-        // 未知设备：等所有服务都枚举完，取第一个可用的候选对
+        // 未知设备：等所有服务都枚举完，取第一个可用的候选对。
+        // 关键：只在「还没有通知通道」时才采纳。像 YuanQuFOC972 这种
+        // FFE0/FFEC 已绑定 + FFF6/FFF7 配置通道的双服务设备，后枚举到的
+        // FFF7 会把 FFEC 顶掉，结果订阅的是 FFEC、比对的是 FFF7，第一帧都进不来。
         if pendingServiceCount > 0 {
             pendingServiceCount -= 1
-            if pendingServiceCount == 0, writeChar == nil || notifyChar == nil,
+            if pendingServiceCount == 0, notifyChar == nil,
                let best = autoCandidates.first {
                 notifyChar = best.1
                 writeChar = best.2
@@ -639,6 +652,16 @@ extension CockpitCentral: CBPeripheralDelegate {
         lastSpeedDate = Date()
         gps.start()
         beginPolling()
+
+        // 「只推不接」的设备订阅完可能是哑的（有的批次要主机先读一次才开流）。
+        // 3 秒一帧没有就非破坏性读一次探活：读得到说明通道是通的、只是不推；
+        // 读不到就说明得发开流命令——两种情况日志里能区分开。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.rxFrames == 0, !self.probedRead else { return }
+            self.probedRead = true
+            self.log("订阅 3 秒无数据，读一次 \(n.uuid.uuidString) 探活")
+            peripheral.readValue(for: n)
+        }
     }
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
@@ -651,6 +674,7 @@ extension CockpitCentral: CBPeripheralDelegate {
         guard characteristic.uuid == notifyChar?.uuid,
               let data = characteristic.value, !data.isEmpty else { return }
         let bytes = [UInt8](data)
+        rxFrames += 1
         // 帧里若藏有型号字符串（版本帧常见），收集成候选
         for cand in ControllerIdentifier.asciiCandidates(in: bytes)
         where !modelCandidates.contains(cand) && modelCandidates.count < 6 {
