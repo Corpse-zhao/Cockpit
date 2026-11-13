@@ -434,8 +434,21 @@ extension CockpitCentral: CBCentralManagerDelegate {
             }
         }
 
-        let isKnown = ControllerIdentifier.isKnownName(name)
-        let showAll = UserDefaults.standard.bool(forKey: CockpitCentral.showAllDevicesKey)
+        // 「认识它」有三条路：
+        //  1) 广播名命中品牌表（LBMC / YuanQuFOC…）
+        //  2) 广播包里带了 FFE0 / FFF0 服务 UUID —— 远驱皮（YuanQuFOC972）的
+        //     广播包有时不放名字，iOS 在 didDiscover 拿到的是空名，
+        //     只认名字会把控制器整个滤掉，表现就是「明明开着机却扫不到」
+        //  3) 用户开了「显示所有蓝牙设备」（兜底，认得出的排前面）
+        let advServices = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        let advKnown = advServices.contains {
+            let u = $0.uuidString.uppercased()
+            return u == "FFE0" || u == "FFF0"
+        }
+        let isKnown = ControllerIdentifier.isKnownName(name) || advKnown
+        // 显示全部设备默认开：这是找控制器的工具，宁可列表吵一点
+        // 也别把没认出来的控制器藏掉；认得出的仍然排最前面
+        let showAll = UserDefaults.standard.object(forKey: CockpitCentral.showAllDevicesKey) as? Bool ?? true
         guard isKnown || showAll else { return }
         if let idx = devices.firstIndex(where: { $0.id == peripheral.identifier }) {
             devices[idx].rssi = RSSI.intValue

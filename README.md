@@ -1,9 +1,10 @@
 # Cockpit
 
-凌博 E400 控制器蓝牙直连仪表 App（九号 E80c MK2）。
+凌博 E400 控制器蓝牙直连仪表 App（九号 E80c MK2），现同样支持远驱（Fardriver / VOTOL / YuanQuFOC）。
 
-- **协议**：凌博 UART 透传帧 `AA 55 LEN CMD data SUM8`，BLE 服务 FFF0（写 FFF2 / 通知 FFF1），500ms 轮询
+- **凌博协议**：UART 透传帧 `AA 55 LEN CMD data SUM8`，BLE 服务 FFF0（写 FFF2 / 通知 FFF1），500ms 轮询
 - **握手**：`AA 55 02 20 21` 读标定（换算分母）→ `AA 55 02 22 23` 读实时（rpm / 母线电压电流 / 双温度 / 故障 / 转把 / 挡位）
+- **远驱协议**：FFE0 / FFEC 纯通知（不发请求），固定 16 字节帧 `AA | id | 12B 数据 | CRC16`（poly 0xA001，初值 0x7F3C）
 - **构建**：xcodegen 生成工程，GitHub Actions（macOS）编译 unsigned → ad-hoc 签名 → IPA Release
 
 ## 支持范围（能连谁）
@@ -13,6 +14,7 @@
 | 控制器 | 能否使用 | 说明 |
 |---|---|---|
 | 凌博全系（LBMC + FFF0/FFF1/FFF2 + AA55） | **直接可用** | 电压/电流换算分母是运行时从 `0x60` 帧读的，不写死，所以 E300/E400 各电压平台都通用 |
+| 远驱 Fardriver / VOTOL（含广播名 `YuanQuFOC…` 的机器） | **直接可用** | FFE0/FFEC 只订阅不发请求；电压/电流/双温度/SOC/档位直读，转速按极对数换算（默认 20，可用「转速校准」微调） |
 | 其他走 FFF0 / FFE0 / Nordic UART 透传的设备 | **能连、能看字节** | GATT 自动探测可配对通道，原始帧在「数据台」可见；要显示数值必须新增一个协议驱动 |
 | 私有或加密协议（九号原厂中控、小牛、博世等） | 通常不行 | 能建立 BLE 连接，但请求无有效应答 |
 
@@ -20,13 +22,15 @@
 
 ```
 传输层  CockpitCentral      FFF0 优先；未命中则全量枚举服务，自动配对 notify+write
-驱动层  ControllerDriver    协议接口。LingboParser 已实现，对应凌博 AA55
+驱动层  ControllerDriver    协议接口。LingboParser（凌博 AA55）、FardriverParser（远驱 16B AA 帧）已实现
 应用层  Dashboard/Console/Settings   与品牌无关，只消费 Telemetry
 ```
 
 加一个新品牌 = 新建一个 `XxxDriver.swift` 实现 `ControllerDriver`（五个成员：`displayName` / `isCalibrated` / `calibrationSummary` / `nextRequestFrame()` / `feed()`），再把 `ControllerDrivers.makeDefault()` 换成它。蓝牙层和三个页面一行都不用改。
 
-调试未知控制器时：设置页打开「扫描时显示所有蓝牙设备」→ 连接 → 看「数据台」里的服务/特征清单与十六进制流，照真实帧写驱动。
+连上后驱动按**首帧嗅探**自动选择：16 字节 + `0xAA` + `0x7F3C` 校验通过判远驱，`AA 55` 长帧标定成功判凌博；一边标定成功就锁死，不会误切。
+
+调试未知控制器时：扫描列表默认显示全部蓝牙设备（认得出的控制器排前面）→ 连接 → 看「数据台」里的服务/特征清单与十六进制流，照真实帧写驱动。
 
 ## 车速标定：轮胎受压模型
 
@@ -61,8 +65,13 @@
 
 ## 构建
 
-`runs-on: macos-15`（macos-14 现在只发 arm64 runner，免费额度不支持，会直接 cancelled）。
+本地：装 [XcodeGen](https://github.com/yonaskolb/XcodeGen) 后 `xcodegen generate`，再用 Xcode 打开 `Cockpit.xcodeproj`。
+云端：push 即触发 `.github/workflows/build.yml`（`runs-on: macos-15`，macos-14 免费额度不支持），产物自动发到 Release。
 
-产物：Release 页 `Cockpit-v0.1.0.ipa`，ad-hoc 签名，越狱机经 TrollStore / AppSync / Sideloadly 安装。
+IPA 为 ad-hoc 签名，越狱机经 TrollStore / AppSync / Sideloadly 安装。
 
-协议参考：开源逆向基线（Motexa 2.7.0 APK 反编译）移植。
+协议参考：凌博协议基线来自开源逆向（Motexa 2.7.0 APK 反编译），远驱协议参考公开的 ESP32-Fardriver-BLE-Reader 实现。
+
+## License
+
+[MIT](LICENSE)
