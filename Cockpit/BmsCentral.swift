@@ -160,6 +160,15 @@ final class BmsCentral: NSObject, ObservableObject {
         } else if manager?.state == .poweredOn {
             manager?.scanForPeripherals(withServices: nil, options: nil)
         }
+        // 看门狗：界面上写着「正在搜索」，但 central 其实没在扫——iOS 在
+        // 从后台回来、或刚重建 manager 时会把扫描吞掉，表现就是永远搜不到。
+        // 8 秒零设备就无条件补一次扫描（幂等，重复调用只是重新开扫）。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self, self.phase == .scanning, self.devices.isEmpty,
+                  self.manager?.state == .poweredOn,
+                  self.manager?.isScanning != true else { return }
+            self.manager?.scanForPeripherals(withServices: nil, options: nil)
+        }
     }
 
     func stopScan() {

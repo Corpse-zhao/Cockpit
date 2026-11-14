@@ -408,8 +408,16 @@ struct BmsConnectSheet: View {
     private var green: Color { Color(red: 0.2, green: 0.95, blue: 0.55) }
     private var pink: Color { Color(red: 1.0, green: 0.36, blue: 0.66) }
 
+    /// 「仅保护板」过滤命中的数量
+    private var boardCount: Int { bms.devices.filter { $0.likely }.count }
+
+    /// 只认保护板名/服务来过滤，但一个都没认出来时不该让用户对着空列表发呆：
+    /// 保护板换了固件、广播名被截断、或者广播里干脆不带名字/服务 UUID，
+    /// 都会让 likely 全为 false —— 这时自动退回「全部蓝牙」，让人至少能点进去试。
+    private var autoFallback: Bool { onlyBoards && boardCount == 0 && !bms.devices.isEmpty }
+
     private var list: [BmsCentral.Device] {
-        onlyBoards ? bms.devices.filter { $0.likely } : bms.devices
+        (onlyBoards && !autoFallback) ? bms.devices.filter { $0.likely } : bms.devices
     }
 
     private var tone: Color {
@@ -540,7 +548,7 @@ struct BmsConnectSheet: View {
                 Button {
                     onlyBoards.toggle()
                 } label: {
-                    Text(onlyBoards ? "仅保护板" : "全部蓝牙")
+                    Text(autoFallback ? "全部蓝牙（自动）" : (onlyBoards ? "仅保护板" : "全部蓝牙"))
                         .font(.system(size: 9))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
